@@ -841,6 +841,8 @@ class Worker:
                   lexical_tokens=EXCLUDED.lexical_tokens, embedding=EXCLUDED.embedding,
                   embedding_status='succeeded', embedding_created_at=now(), embedding_error=NULL
               WHERE inha_policy.search_chunks.embedding_status='failed'
+                 -- a draft corrected before publication (published chunks are frozen by trigger)
+                 OR inha_policy.search_chunks.input_sha256 <> EXCLUDED.input_sha256
         """), {"version": version_id, "profile": profile_id, "text": chunk_text,
                  "sha": input_sha, "lexical": chunk_text, "embedding": vector_literal})
         if await activate_if_complete(session, profile):
@@ -855,7 +857,13 @@ class Worker:
                         UPDATE inha_policy.opportunity_versions ov
                         SET publication_state='published', published_at=now()
                         WHERE ov.id=:id AND ov.publication_state='draft'
-                          AND ov.data_quality_status='complete'
+                          -- a merged opportunity stays merged; publishing would revive it
+                          AND NOT EXISTS (SELECT 1 FROM inha_policy.opportunities o
+                                          WHERE o.id=ov.opportunity_id AND o.lifecycle_status='merged')
+                          AND (ov.data_quality_status='complete'
+                               -- checked against the source by the AI review instead of a person
+                               OR (:ai_reviewed AND ov.data_quality_status='needs_review'
+                                   AND 'ai_review_cleared' = ANY(ov.quality_flags)))
                           AND NOT EXISTS (
                             SELECT 1 FROM inha_policy.opportunity_version_sources s
                             JOIN inha_policy.notice_versions nv ON nv.id=s.notice_version_id
@@ -865,7 +873,8 @@ class Worker:
                                    OR n.availability_status <> 'available'
                                    OR n.current_notice_version_id IS DISTINCT FROM nv.id))
                         RETURNING ov.opportunity_id
-                    """), {"id": version_id})).scalar_one_or_none()
+                    """), {"id": version_id,
+                             "ai_reviewed": bool(job["payload"].get("ai_reviewed"))})).scalar_one_or_none()
             except DBAPIError as exc:
                 candidate = None
                 await session.execute(text("""

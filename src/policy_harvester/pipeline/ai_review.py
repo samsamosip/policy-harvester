@@ -3,13 +3,19 @@
 Items that hinge on model judgement (quality, identity, revision candidates) are created in the
 same transaction as the extraction that raised them; ``defer`` turns them into ``ai_pending`` and
 queues a ``review`` job. The job shows the model the item, the opportunities involved and the
-notice text. A confident "dismiss" closes the item (and, for quality, lets the version publish);
-anything else opens it for people with the model's reasoning attached.
+notice text. With high confidence the model acts instead of people:
+- dismiss: nothing is wrong; the item closes (a quality item's draft is released for publication);
+- fix: a quality item's draft has wrong values; they are corrected from the source, then released;
+- merge: an identity item's opportunities are one; they are merged into the oldest published one.
+Anything else opens the item for people with the model's reasoning attached.
 """
 from __future__ import annotations
 
 import json
+import re
 import uuid
+from datetime import date, time
+from decimal import Decimal, InvalidOperation
 from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
@@ -21,16 +27,46 @@ SOURCE_CHAR_LIMIT = 60000
 CREATED_REVIEWS = "created_review_ids"
 
 
+class Correction(BaseModel):
+    model_config = ConfigDict(extra="forbid")
+
+    path: str = Field(description="target_version 필드 이름, windows/<id>/<필드> 또는 benefits/<id>/<필드>")
+    value: str | int | float | None
+    quote: str = Field(description="고친 값의 근거가 되는 원문 표현")
+
+
 class ReviewVerdict(BaseModel):
     model_config = ConfigDict(extra="forbid")
 
-    verdict: Literal["dismiss", "escalate"]
+    verdict: Literal["dismiss", "fix", "merge", "escalate"]
     confidence: Literal["high", "medium", "low"]
     reason: str = Field(max_length=2000)
+    corrections: list[Correction] = Field(default_factory=list)
+    same_opportunity_ids: list[str] = Field(default_factory=list)
 
     @property
     def dismissed(self) -> bool:
         return self.verdict == "dismiss" and self.confidence == "high"
+
+    @property
+    def acted(self) -> bool:
+        """The model settles the item itself: high confidence and an action it may take."""
+        return self.confidence == "high" and self.verdict in {"dismiss", "fix", "merge"}
+
+
+class ActionRefused(ValueError):
+    """The model's action does not fit the item; people decide instead."""
+
+
+TEXT_COLUMNS = {"title", "summary", "provider_name", "administrator_name", "support_summary",
+                "eligibility_summary", "application_instructions", "selection_process", "round_label"}
+COLUMN_CHOICES = {"selection_capacity_scope": {"final_selection", "university_nomination"},
+                  "academic_term": {"spring", "summer", "fall", "winter", "annual", "other", "unknown"}}
+INTEGER_COLUMNS = {"selection_capacity", "academic_year"}
+WINDOW_FIELDS = {"start_date": "date", "end_date": "date", "start_time": "time", "end_time": "time",
+                 "raw_text": "text", "conditions_text": "text"}
+BENEFIT_FIELDS = {"amount_min": "amount", "amount_max": "amount", "raw_text": "text",
+                  "conditions_text": "text"}
 
 
 def remember_created(session: AsyncSession, review_id: uuid.UUID) -> None:
@@ -94,7 +130,10 @@ async def defer(session: AsyncSession, review_ids: list[uuid.UUID], job: dict[st
             INSERT INTO inha_policy.crawl_jobs
               (crawl_run_id, stage, job_key, notice_id, notice_version_id, payload)
             VALUES (:run, 'review', :key, :notice, :version, CAST(:payload AS jsonb))
-            ON CONFLICT DO NOTHING
+            ON CONFLICT (crawl_run_id, stage, job_key) DO UPDATE  -- an item sent back for another look
+              SET status='queued', attempt_count=0, available_at=now(), started_at=NULL,
+                  finished_at=NULL, worker_id=NULL, error_code=NULL, error_message=NULL
+              WHERE inha_policy.crawl_jobs.status NOT IN ('queued', 'retry', 'running')
         """), {"run": job["crawl_run_id"], "key": f"review:{row['id']}", "notice": job.get("notice_id"),
                  "version": job.get("notice_version_id"),
                  "payload": json.dumps({"review_id": str(row["id"])})})
@@ -146,9 +185,36 @@ async def subject(session: AsyncSession, review: dict[str, Any]) -> tuple[dict[s
                 if int(path[1]) < len(items):
                     extracted_item = items[int(path[1])]
     details = {key: value for key, value in payload.items() if key not in {"ai_review"}}
-    return {"review_kind": review["review_kind"], "issue": issue(review["review_kind"], payload),
-            "details": details, "opportunities": opportunities,
-            "extracted_item": extracted_item}, notice_version_id
+    context = {"review_kind": review["review_kind"], "issue": issue(review["review_kind"], payload),
+               "details": details, "opportunities": opportunities, "extracted_item": extracted_item}
+    if review["entity_type"] == "opportunity_version":
+        context["target_version"] = await _editable(session, review["entity_id"])
+    return context, notice_version_id
+
+
+def _plain(value: Any) -> Any:
+    if isinstance(value, uuid.UUID | Decimal | date | time):
+        return str(value)
+    return value
+
+
+async def _editable(session: AsyncSession, version_id: uuid.UUID) -> dict[str, Any]:
+    """The draft's values the model may correct, with the ids of its windows and benefits."""
+    columns = sorted(TEXT_COLUMNS | set(COLUMN_CHOICES) | INTEGER_COLUMNS)
+    row = (await session.execute(text(f"""
+        SELECT {", ".join(columns)} FROM inha_policy.opportunity_versions WHERE id=:id
+    """), {"id": version_id})).mappings().one()
+    windows = (await session.execute(text("""
+        SELECT id, window_kind, phase_label, start_date, start_time, end_date, end_time, raw_text,
+               conditions_text FROM inha_policy.application_windows WHERE opportunity_version_id=:id
+    """), {"id": version_id})).mappings().all()
+    benefits = (await session.execute(text("""
+        SELECT id, benefit_kind, amount_kind, amount_min, amount_max, payment_frequency, raw_text,
+               conditions_text FROM inha_policy.benefits WHERE opportunity_version_id=:id
+    """), {"id": version_id})).mappings().all()
+    return {**{key: _plain(value) for key, value in row.items()},
+            "windows": [{key: _plain(value) for key, value in item.items()} for item in windows],
+            "benefits": [{key: _plain(value) for key, value in item.items()} for item in benefits]}
 
 
 def source_text(blocks: dict[str, str]) -> str:
@@ -159,32 +225,183 @@ def source_text(blocks: dict[str, str]) -> str:
 
 
 async def apply(session: AsyncSession, review: dict[str, Any], verdict: ReviewVerdict, model: str) -> str:
-    """Record the verdict; a confident dismissal closes the item and undoes what it held back."""
-    record = {"model": model, "verdict": verdict.verdict, "confidence": verdict.confidence,
-              "reason": verdict.reason}
-    if not verdict.dismissed:
+    """Record the verdict and, when the model is sure, carry out its action and close the item."""
+    record: dict[str, Any] = {"model": model, "verdict": verdict.verdict,
+                              "confidence": verdict.confidence, "reason": verdict.reason}
+    quality = review["review_kind"] == "other" and review["entity_type"] == "opportunity_version"
+    identity = review["review_kind"] == "identity_uncertain"
+    if not verdict.acted:
         await open_item(session, review["id"], record)
         return "escalated"
+    try:
+        async with session.begin_nested():
+            if verdict.verdict == "fix":
+                if not quality or not verdict.corrections:
+                    raise ActionRefused("corrections apply to a quality item's draft only")
+                record["corrections"] = await _correct(session, review["entity_id"], verdict.corrections)
+            elif verdict.verdict == "merge":
+                if not identity:
+                    raise ActionRefused("merging applies to identity items only")
+                record["merges"] = await _merge(session, review, verdict)
+            if quality:
+                await _clear_quality(session, review)
+            elif review["payload"].get("operation") == "cross_notice_candidates":
+                merged = {item["loser"] for item in record.get("merges", [])} | {
+                    item["winner"] for item in record.get("merges", [])}
+                for candidate in review["payload"].get("candidates") or []:
+                    if candidate.get("opportunity_id") not in merged or verdict.verdict != "merge":
+                        await _reject_proposal(session, candidate.get("decision_id"), verdict.reason)
+    except ActionRefused as exc:
+        record["action_refused"] = str(exc)
+        await open_item(session, review["id"], record)
+        return "escalated"
+    outcome = {"dismiss": "dismissed", "fix": "corrected", "merge": "merged"}[verdict.verdict]
+    note = f"AI 2차 검토({model}): {verdict.reason}"
+    if record.get("corrections"):
+        note += " / 수정: " + "; ".join(f"{item['path']}: {item['before']!r} → {item['after']!r}"
+                                       for item in record["corrections"])
     await session.execute(text("""
-        UPDATE inha_policy.review_items SET status='dismissed', resolved_at=clock_timestamp(),
+        UPDATE inha_policy.review_items SET status=:status, resolved_at=clock_timestamp(),
           updated_at=clock_timestamp(), resolution_note=:note,
           payload = payload || jsonb_build_object('ai_review', CAST(:record AS jsonb))
         WHERE id=:id AND status='ai_pending'
-    """), {"id": review["id"], "note": f"AI 2차 검토({model}): {verdict.reason}",
-             "record": json.dumps(record, ensure_ascii=False)})
-    payload = review["payload"]
-    if review["review_kind"] == "other" and review["entity_type"] == "opportunity_version":
-        await _clear_quality(session, review)
-    if payload.get("operation") == "cross_notice_candidates":
-        for candidate in payload.get("candidates") or []:
-            await _reject_proposal(session, candidate.get("decision_id"), verdict.reason)
+    """), {"id": review["id"], "status": "dismissed" if verdict.verdict == "dismiss" else "resolved",
+             "note": note[:4000], "record": json.dumps(record, ensure_ascii=False, default=str)})
     await session.execute(text("""
         INSERT INTO inha_policy.audit_logs
           (actor_kind, actor_id, action, entity_type, entity_id, after_state, reason, automated)
-        VALUES ('worker', 'ai_reviewer', 'review_dismissed_by_ai', 'review_item', CAST(:id AS text),
+        VALUES ('worker', 'ai_reviewer', :action, 'review_item', CAST(:id AS text),
                 CAST(:record AS jsonb), :reason, true)
-    """), {"id": review["id"], "record": json.dumps(record, ensure_ascii=False), "reason": verdict.reason})
-    return "dismissed"
+    """), {"id": review["id"], "action": f"review_{outcome}_by_ai",
+             "record": json.dumps(record, ensure_ascii=False, default=str), "reason": verdict.reason})
+    return outcome
+
+
+async def _correct(session: AsyncSession, version_id: uuid.UUID,
+                   corrections: list[Correction]) -> list[dict[str, Any]]:
+    """Write corrected values into the unpublished draft; any invalid one refuses them all."""
+    state = (await session.execute(text(
+        "SELECT published_at FROM inha_policy.opportunity_versions WHERE id=:id FOR UPDATE"
+    ), {"id": version_id})).mappings().one_or_none()
+    if state is None or state["published_at"] is not None:
+        raise ActionRefused("only an unpublished draft can be corrected")
+    done = []
+    for item in corrections:
+        parts = item.path.strip("/").split("/")
+        if len(parts) == 1:
+            column = parts[0]
+            value = _coerce_column(column, item.value)
+            before = (await session.execute(text(
+                f"SELECT {column} FROM inha_policy.opportunity_versions WHERE id=:id"
+            ), {"id": version_id})).scalar_one()
+            await session.execute(text(
+                f"UPDATE inha_policy.opportunity_versions SET {column}=:value WHERE id=:id"
+            ), {"id": version_id, "value": value})
+        elif len(parts) == 3 and parts[0] in {"windows", "benefits"}:
+            table, fields = (("application_windows", WINDOW_FIELDS) if parts[0] == "windows"
+                             else ("benefits", BENEFIT_FIELDS))
+            if parts[2] not in fields:
+                raise ActionRefused(f"{item.path} is not correctable")
+            value = _coerce(fields[parts[2]], item.value, item.path)
+            try:
+                row_id = uuid.UUID(parts[1])
+            except ValueError as exc:
+                raise ActionRefused(f"{item.path}: unknown id") from exc
+            before = (await session.execute(text(f"""
+                SELECT {parts[2]} FROM inha_policy.{table} WHERE id=:row AND opportunity_version_id=:id
+            """), {"row": row_id, "id": version_id})).one_or_none()
+            if before is None:
+                raise ActionRefused(f"{item.path}: not a row of this version")
+            before = before[0]
+            await session.execute(text(
+                f"UPDATE inha_policy.{table} SET {parts[2]}=:value WHERE id=:row"
+            ), {"row": row_id, "value": value})
+        else:
+            raise ActionRefused(f"{item.path} is not correctable")
+        done.append({"path": item.path, "before": _plain(before), "after": _plain(value), "quote": item.quote})
+    await session.execute(text("""
+        UPDATE inha_policy.opportunity_versions
+        SET quality_flags=array_append(quality_flags, 'ai_corrected') WHERE id=:id
+    """), {"id": version_id})
+    return done
+
+
+def _coerce_column(column: str, value: Any) -> Any:
+    if column in TEXT_COLUMNS:
+        return _coerce("text", value, column)
+    if column in INTEGER_COLUMNS:
+        if value is None or (isinstance(value, int) and value >= 0) or (isinstance(value, str) and value.isdigit()):
+            return None if value is None else int(value)
+        raise ActionRefused(f"{column} needs a non-negative integer")
+    if column in COLUMN_CHOICES:
+        if value is None or value in COLUMN_CHOICES[column]:
+            return value
+        raise ActionRefused(f"{column} must be one of {sorted(COLUMN_CHOICES[column])}")
+    raise ActionRefused(f"{column} is not correctable")
+
+
+def _coerce(kind: str, value: Any, path: str) -> Any:
+    if value is None:
+        return None
+    try:
+        if kind == "text":
+            return str(value)
+        if kind == "date":
+            return date.fromisoformat(str(value))
+        if kind == "time":
+            return time.fromisoformat(str(value))
+        if kind == "amount":
+            amount = Decimal(re.sub(r"[,\s원]", "", str(value)))
+            if amount < 0:
+                raise ValueError("negative")
+            return amount
+    except (ValueError, InvalidOperation) as exc:
+        raise ActionRefused(f"{path}: {value!r} is not a valid {kind}") from exc
+    raise ActionRefused(f"{path}: unknown kind")
+
+
+async def _merge(session: AsyncSession, review: dict[str, Any], verdict: ReviewVerdict) -> list[dict[str, str]]:
+    """Merge the opportunities the model found to be one into the oldest published of them."""
+    allowed = set(related_opportunity_ids(review))
+    ids = list(dict.fromkeys(verdict.same_opportunity_ids))
+    if len(ids) < 2 or not set(ids) <= allowed:
+        raise ActionRefused("a merge needs two or more of the opportunities under review")
+    rows = (await session.execute(text("""
+        SELECT o.id, o.lifecycle_status, o.created_at,
+               EXISTS (SELECT 1 FROM inha_policy.opportunity_versions v
+                       WHERE v.opportunity_id=o.id AND v.publication_state='published') AS published
+        FROM inha_policy.opportunities o WHERE o.id = ANY(CAST(:ids AS uuid[])) FOR UPDATE
+    """), {"ids": ids})).mappings().all()
+    live = [row for row in rows if row["lifecycle_status"] != "merged"]
+    if len(live) < 2:
+        raise ActionRefused("fewer than two of those opportunities are still unmerged")
+    winner = sorted(live, key=lambda row: (not row["published"], row["created_at"]))[0]
+    proposals = {str(item.get("opportunity_id")): item.get("decision_id")
+                 for item in review["payload"].get("candidates") or []}
+    merges = []
+    for loser in live:
+        if loser["id"] == winner["id"]:
+            continue
+        decision_id = uuid.uuid4()
+        proposal = proposals.get(str(loser["id"])) or proposals.get(str(winner["id"]))
+        await session.execute(text("""
+            INSERT INTO inha_policy.identity_decisions
+              (id, decision_kind, decision_status, opportunity_id, other_opportunity_id,
+               supersedes_decision_id, identity_basis, same_program_verified, same_cycle_verified,
+               same_scope_verified, amendment_kind, rule_version, decision_reason, actor_kind,
+               actor_id, observed_at)
+            VALUES (:id, 'merge', 'confirmed', :winner, :loser, CAST(:proposal AS uuid),
+                    'verified_cycle_scope', true, true, true, 'none', 'ai-review-1.0', :reason,
+                    'ai_review', 'ai_reviewer', clock_timestamp())
+        """), {"id": decision_id, "winner": winner["id"], "loser": loser["id"],
+                 "proposal": proposal,
+                 "reason": verdict.reason})
+        await session.execute(text("""
+            UPDATE inha_policy.opportunities SET lifecycle_status='merged', merged_into_id=:winner,
+              last_identity_decision_id=:decision, updated_at=now() WHERE id=:loser
+        """), {"winner": winner["id"], "decision": decision_id, "loser": loser["id"]})
+        merges.append({"loser": str(loser["id"]), "winner": str(winner["id"]), "decision_id": str(decision_id)})
+    return merges
 
 
 async def open_item(session: AsyncSession, review_id: uuid.UUID, record: dict[str, Any]) -> None:
@@ -197,7 +414,8 @@ async def open_item(session: AsyncSession, review_id: uuid.UUID, record: dict[st
 
 async def _clear_quality(session: AsyncSession, review: dict[str, Any]) -> None:
     """The model found the flagged draft correct: give it the quality the flags withheld and
-    re-run the embed step, which publishes it when auto-publishing is on."""
+    re-run the embed step, which publishes it when auto-publishing is on. A version with
+    conflicting values stays needs_review and is published as reviewed (ai_review_cleared)."""
     from .assembler import OpportunityAssembler
 
     source = (await session.execute(text("""
@@ -213,13 +431,24 @@ async def _clear_quality(session: AsyncSession, review: dict[str, Any]) -> None:
     if source is None:  # published, superseded or gone meanwhile: nothing to release
         return
     provenance = await OpportunityAssembler(session)._provenance_flags(source["notice_version_id"])
+    # Values the extraction marked as conflicting keep the version at needs_review: the database
+    # only publishes such a version as a reviewed one, as a person publishing it would.
+    conflicts = (await session.execute(text("""
+        SELECT EXISTS (SELECT 1 FROM inha_policy.field_evidence e
+                       WHERE e.opportunity_version_id=:id AND e.candidate_status='conflicting'
+                         AND NOT EXISTS (SELECT 1 FROM inha_policy.field_resolutions r
+                                         WHERE r.id=e.resolution_id
+                                           AND r.status IN ('agreed', 'resolved_explicit_update')))
+    """), {"id": source["id"]})).scalar_one()
+    quality = "needs_review" if conflicts else "partial" if provenance else "complete"
     await session.execute(text("""
         UPDATE inha_policy.opportunity_versions
         SET data_quality_status=:quality,
             quality_flags=array_cat(quality_flags, CAST(:flags AS text[]))
         WHERE id=:id
-    """), {"id": source["id"], "quality": "partial" if provenance else "complete",
-             "flags": ["ai_review_cleared", *provenance]})
+    """), {"id": source["id"], "quality": quality, "flags": ["ai_review_cleared", *provenance]})
+    if provenance:  # incomplete sources are not publishable without people, reviewed or not
+        return
     await session.execute(text("""
         INSERT INTO inha_policy.crawl_jobs
           (crawl_run_id, stage, job_key, notice_id, notice_version_id, payload)
@@ -227,7 +456,7 @@ async def _clear_quality(session: AsyncSession, review: dict[str, Any]) -> None:
         ON CONFLICT DO NOTHING
     """), {"run": source["crawl_run_id"], "key": f"opportunity:{source['id']}:ai-review",
              "notice": source["notice_id"], "version": source["notice_version_id"],
-             "payload": json.dumps({"opportunity_version_id": str(source["id"])})})
+             "payload": json.dumps({"opportunity_version_id": str(source["id"]), "ai_reviewed": True})})
 
 
 async def _reject_proposal(session: AsyncSession, decision_id: str | None, reason: str) -> None:

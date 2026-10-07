@@ -209,10 +209,16 @@ PostgreSQL에 저장할 수 없는 NUL 문자는 저장 직전에 제거한다.
   각 실행은 별도 `extraction_runs` 행과 `llm_exchanges` 기록을 남긴다.
 - AI 2차 검토: 판단이 필요한 검토(품질 확인, 동일성 확인, 정정·연장 후보)는 사람에게 바로 보내지 않고
   `REVIEW_LLM_MODEL`(기본 구성 `bedrock.anthropic.claude-opus-5-5`, `LLM_*` endpoint, thinking
-  `REVIEW_REASONING_EFFORT`)이 공고 원문·추출 결과·관련 장학을 보고 먼저 판단한다(`review` 작업, worker-llm이 처리).
-  문제가 없다고 high 확신일 때만 닫는다: 품질이면 초안의 품질을 올려 공개하고(`ai_review_cleared`), 다른 공고와의
-  병합 후보면 제안을 기각한다. 그 밖에는 판단 근거를 붙여 검토함에 올리고, 검토 모델이 끝내 실패해도 그대로
-  올린다. 처리·수집 실패나 DB 공개 규칙 거부는 판단할 것이 아니라 바로 올라간다. 모델을 비우면 꺼진다.
+  `REVIEW_REASONING_EFFORT`)이 공고 원문·추출 결과·관련 장학을 보고 먼저 처리한다(`review` 작업, worker-llm이
+  추출 대기열보다 먼저 처리). high 확신일 때만 직접 행동한다.
+  - dismiss: 문제없음. 품질 검토면 초안을 공개 대상으로 올린다(`ai_review_cleared`; 근거 충돌이 남은 초안은
+    사람이 공개할 때처럼 `needs_review` 그대로 공개).
+  - fix(품질): 공개 전 초안의 값(요약·대상·인원과 그 의미·신청 기간 날짜·금액 등)을 원문 근거로 고친 뒤
+    검색 색인을 다시 만들고 공개한다(`ai_corrected`, 수정 전후 값은 검토 항목과 감사 로그에 남는다).
+  - merge(동일성): 같은 모집인 장학을 공개된 것 중 가장 오래된 장학으로 병합한다(`identity_decisions`
+    actor `ai_review`). 병합 후보 중 다른 장학은 제안을 기각한다.
+  그 밖에(원문 모순, 장학 분리, 다른 공고의 정정 적용)는 판단 근거를 붙여 검토함에 올리고, 검토 모델이 끝내
+  실패해도 그대로 올린다. 처리·수집 실패나 DB 공개 규칙 거부는 바로 올라간다. 모델을 비우면 꺼진다.
 - 인용이 block에 실제로 없으면 버리지 않고 warning과 `needs_review`로 남긴다.
 - 검증 전 결정론적 정리: code fence·trailing comma 제거, 모델이 `state`에 넣은 미정의 값(예: `inferred`)은
   `unknown`으로 내리고 값을 버림, 미확정 state에 붙은 값 제거, 인용 없는 `stated`는 `unknown`으로 내림,

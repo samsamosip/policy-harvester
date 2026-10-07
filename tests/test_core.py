@@ -92,12 +92,31 @@ class AiReviewTests(unittest.TestCase):
         self.assertFalse(reviewable("other", {"operation": "auto_publish_blocked"}))
         self.assertFalse(reviewable("parsing_failed", {"error": "x"}))
 
-    def test_only_confident_dismissals_close_items(self):
+    def test_only_confident_verdicts_act(self):
         from policy_harvester.pipeline.ai_review import ReviewVerdict
 
-        self.assertTrue(ReviewVerdict(verdict="dismiss", confidence="high", reason="r").dismissed)
-        self.assertFalse(ReviewVerdict(verdict="dismiss", confidence="medium", reason="r").dismissed)
-        self.assertFalse(ReviewVerdict(verdict="escalate", confidence="high", reason="r").dismissed)
+        for verdict in ("dismiss", "fix", "merge"):
+            self.assertTrue(ReviewVerdict(verdict=verdict, confidence="high", reason="r").acted)
+            self.assertFalse(ReviewVerdict(verdict=verdict, confidence="medium", reason="r").acted)
+        self.assertFalse(ReviewVerdict(verdict="escalate", confidence="high", reason="r").acted)
+
+    def test_corrections_are_typed_and_whitelisted(self):
+        from datetime import date
+        from decimal import Decimal
+
+        from policy_harvester.pipeline.ai_review import ActionRefused, _coerce, _coerce_column
+
+        self.assertEqual(_coerce_column("eligibility_summary", "뚜렷한 목표의식"), "뚜렷한 목표의식")
+        self.assertEqual(_coerce_column("selection_capacity", "2"), 2)
+        self.assertEqual(_coerce_column("selection_capacity_scope", "university_nomination"), "university_nomination")
+        self.assertEqual(_coerce("date", "2026-09-18", "windows/x/end_date"), date(2026, 9, 18))
+        self.assertEqual(_coerce("amount", "3,500,000원", "benefits/x/amount_max"), Decimal("3500000"))
+        for column, value in (("selection_capacity", -1), ("selection_capacity_scope", "everyone"),
+                              ("publication_state", "published"), ("data_quality_status", "complete")):
+            with self.assertRaises(ActionRefused):
+                _coerce_column(column, value)
+        with self.assertRaises(ActionRefused):
+            _coerce("date", "9월 18일", "windows/x/end_date")
 
 
 class TransientErrorTests(unittest.TestCase):
