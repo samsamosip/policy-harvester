@@ -163,20 +163,23 @@ job retry), 정정·연장 적용, 동일성 후보, 품질 상한, 실패 원�
 |---|---|
 | HTML 본문 | lxml(`huge_tree`). 본문은 항상 HTML로 처리(fragment라 sniffing 불가), charset 없는 bytes는 UTF-8 우선. 인라인 요소는 붙여 읽고(`1<span>7:00</span>`=17:00) 블록·`<br>`만 구분. 취소선은 `~~옛 값~~`으로 보존 |
 | 표 | rowspan/colspan을 grid로 펼치고 원본 cell span 보존. 표 안 문단은 별도 block으로 중복하지 않음(한 열짜리 layout 표 제외) |
-| 이미지(포스터 등) | **OCR 없음.** 이미지를 통째로 `.env`의 multimodal LLM에 보내 원문 전사(표는 Markdown) → 문단/표 block |
-| PDF | **Docling**(OCR 끔, TableFormer 표 구조 인식, 읽기 순서). 텍스트층이 없는 페이지는 Docling 대신 렌더링해서 LLM 전사. 문서 안 그림도 LLM 전사 |
+| 이미지(포스터 등) | **OCR 없음.** 이미지를 통째로 multimodal LLM에 보내 원문 전사(표는 HTML, 병합 칸 표시) → 문단/표 block |
+| PDF | 본문은 **PyMuPDF 텍스트층**, 표만 **Docling**(TableFormer)에서 가져오고 표 영역의 텍스트는 표로 대체(Docling의 텍스트 재구성은 일부 한국어 PDF에서 글자를 빠뜨렸다). 텍스트층이 없는 페이지는 페이지째 LLM 전사, 그림이 있는 페이지는 **페이지 이미지 1장 + 그 페이지 텍스트**를 보내 그림에만 있는 장학 정보를 보충(그림마다 호출하지 않음) |
 | DOCX/PPTX/XLSX | **Docling**(OCR 끔). 문서 안 그림은 LLM 전사 |
-| HWP | OLE 구조(`FileHeader`+`BodyText`)로 판별. `hwp5html`로 표 보존 → `hwp5txt`와 비교해 빠진 줄 복구(하이퍼링크 문단 등) → `BinData` 내장 그림은 LLM 전사. `hwp5html` 실패 시 `hwp5txt`만 쓰고 `partial`+`hwp_tables_lost` |
+| HWP | OLE 구조(`FileHeader`+`BodyText`)로 판별. 텍스트·표는 직접 파싱(`hwp5html`로 표 보존 → `hwp5txt`와 비교해 빠진 줄 복구). **rhwp**(0.8.7, 이미지에 한국어 글꼴 포함)로 PDF를 만들어 그림이 있는 페이지만 PDF와 같은 방식으로 페이지 단위 LLM 전사, 그 PDF를 `derived_files`에 남겨 관리자 미리보기로 쓴다. rhwp 실패 시 예전처럼 `BinData` 그림을 하나씩 전사 |
 | DOC(Word 97) | `antiword` |
-| HWPX | XML 파서, 표 보존 |
+| HWPX | XML 파서(표 보존) + HWP와 같은 rhwp 페이지 처리·미리보기 |
 | ZIP | member 수·크기 제한 후 내부 형식별 파싱(내부 이미지도 LLM 전사), 손상·암호화 member는 warning |
 
-Docling은 HWP/HWPX/DOC를 지원하지 않아 해당 형식은 별도 파서를 쓴다. Docling 변환이 실패한 손상 파일은
-PyMuPDF/python-docx/openpyxl/python-pptx로 처리하고 `partial`+`docling_failed:*`로 남긴다. Docling 모델(layout,
+rhwp PDF로 Docling을 돌리면 HWP 표의 30%를 놓쳤고(표본 40개), 텍스트는 단어 기준 99%가 보존됐다(679개).
+그래서 HWP는 직접 파싱을 쓰고 PDF는 페이지·미리보기에만 쓴다. 새 경로가 실패한 파일은 예전 파서
+(PyMuPDF/hwp5/python-docx/openpyxl/python-pptx)로 처리하고 `partial`+`pdf_hybrid_failed:*`/`rhwp_failed:*`/
+`docling_failed:*`로 남긴다. Docling 모델(layout,
 TableFormer)과 CPU용 torch는 Docker 빌드 때 이미지에 포함되며 실행 중에는 내려받지 않는다(`HF_HUB_OFFLINE=1`).
 Docling은 worker마다 모델을 올리므로(수백 MB~2GB) 파싱 worker 수는 메모리에 맞춰 정한다.
 
-이미지 전사: 긴 변 2048px JPEG로 줄여 보내고, 아이콘 크기(200×120 미만)는 건너뛴다. 같은 이미지는 worker 안에서
+이미지 전사: 긴 변 2048px JPEG로 줄여 보내고, 아이콘 크기(200×120 미만)와 페이지 면적 4% 미만 그림은 건너뛴다.
+한 문서 안의 전사 호출은 동시에 4개까지 보낸다. 같은 이미지는 worker 안에서
 SHA-256으로 한 번만 전사하고, 같은 파일의 문서 단위 파싱은 DB 캐시(binary asset + parser + 모델 + 전사 prompt
 version)로 재사용한다. 전사 실패 시 로컬 OCR fallback 없이 job이 재시도되고 최종 실패는 review로 간다.
 5개 이상 게시글에 반복되는 본문 이미지(사이트 배너 등)는 추출 입력에서 빼고 manifest에 기록한다.

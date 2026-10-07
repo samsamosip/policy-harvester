@@ -1,29 +1,30 @@
-"""HWP/HWPX through rhwp: render to PDF, then parse that PDF like any other.
+"""HWP/HWPX: direct parse for text and tables, rhwp's PDF rendering for pages and preview.
 
-The PDF gives HWP documents the same page structure as PDFs (page-level picture transcription,
-Docling tables) and is the preview shown in the admin, since browsers cannot display HWP.
-The direct HWP parse stays as the reference: if the rendered PDF's text misses too much of it
-(fonts, unsupported objects), the direct parse is used instead and the result says so.
+The direct parse (hwp5html/hwp5txt, HWPX XML) reads the document's own structure, so its text
+and tables are exact; Docling on the rendered PDF found 30% fewer tables. What the rendering adds
+is pages: pictures and text-less pages are sent to the multimodal LLM once per page (instead of
+once per embedded picture), and the PDF is the admin preview, since browsers cannot show HWP.
+If rhwp fails, the direct parse runs as before, embedded pictures included.
 """
 from __future__ import annotations
 
 import os
-import re
 import subprocess
 import tempfile
 from dataclasses import replace
 from pathlib import Path
 
-from .parsers import DerivedFile, DocumentParser, ParseResult
-from .pdf_hybrid import PdfHybridParser
+import pymupdf as fitz
+
+from .parsers import Block, DerivedFile, DocumentParser, EmbeddedImage, ParseResult, _key, image_placeholder
+from .pdf_hybrid import PAGE_TEXT_LIMIT, RENDER_ZOOM, _picture_area
 
 RHWP_BIN = os.environ.get("RHWP_BIN", "rhwp")
 RHWP_VERSION = os.environ.get("RHWP_VERSION", "0.8.7")
 # Without system fonts rhwp writes pages with no text at all; these ship in the image.
 FONT_ARGS = ("--font-path", "/usr/share/fonts", "--fallback-sans", "Noto Sans CJK KR",
              "--fallback-serif", "Noto Serif CJK KR")
-MIN_COVERAGE = 0.9
-TIMEOUT_SECONDS = 180
+TIMEOUT_SECONDS = 300
 
 
 def render_pdf(payload: bytes, format_name: str) -> bytes:
@@ -35,31 +36,42 @@ def render_pdf(payload: bytes, format_name: str) -> bytes:
         return output.read_bytes()
 
 
-def line_coverage(reference: str, candidate: str) -> float:
-    """Share of the reference's lines (4+ characters) that appear in the candidate, ignoring
-    whitespace: rendered PDFs often lose the spaces between words, not the words."""
-    lines = {re.sub(r"\s+", "", line) for line in reference.splitlines()}
-    lines = {line for line in lines if len(line) >= 4}
-    if not lines:
-        return 1.0
-    text = re.sub(r"\s+", "", candidate)
-    return sum(1 for line in lines if line in text) / len(lines)
+def picture_pages(pdf: bytes) -> list[EmbeddedImage]:
+    """Rendered pages with pictures, each sent once with the page's own text so the model adds
+    only what the pictures say. Pages of lines and boxes (forms) carry no new text: the direct
+    parse already has every character of an HWP document."""
+    images = []
+    with fitz.open(stream=pdf, filetype="pdf") as document:
+        for index, page in enumerate(document):
+            text_value = page.get_text().strip()
+            if _picture_area(page) == 0:
+                continue
+            png = page.get_pixmap(matrix=fitz.Matrix(RENDER_ZOOM, RENDER_ZOOM), alpha=False).tobytes("png")
+            images.append(EmbeddedImage(f"page-{index + 1}-pictures", png, index + 1,
+                                        {"rendered_page": index + 1, "mode": "page_supplement",
+                                         "page_text": text_value[:PAGE_TEXT_LIMIT]}))
+    return images
 
 
 class HwpPdfParser:
     formats = frozenset({"hwp", "hwpx"})
-    name, version = "rhwp-pdf", f"1.0+rhwp{RHWP_VERSION}+{PdfHybridParser.version}"
+    name, version = "hwp-rhwp-pages", f"1.0+rhwp{RHWP_VERSION}"
 
     def __init__(self, direct: dict[str, DocumentParser]):
         self.direct = direct
 
     def parse(self, payload: bytes, filename: str | None = None, *, format_name: str = "hwp") -> ParseResult:
-        reference = self.direct[format_name].parse(payload, filename)
         pdf = render_pdf(payload, format_name)
-        derived = (DerivedFile("pdf_render", pdf, f"rhwp {RHWP_VERSION}"),)
-        rendered = PdfHybridParser().parse(pdf)
-        coverage = line_coverage(reference.text, rendered.text)
-        if coverage < MIN_COVERAGE:
-            return replace(reference, parser_name=self.name, parser_version=self.version, derived=derived,
-                           quality_flags=(*reference.quality_flags, f"rhwp_low_coverage:{coverage:.2f}"))
-        return replace(rendered, parser_name=self.name, parser_version=self.version, derived=derived)
+        direct = self.direct[format_name].parse(payload, filename)
+        # Embedded pictures are covered by the rendered pages; drop their per-picture placeholders.
+        blocks = [block for block in direct.blocks if "pending_image" not in block.metadata]
+        pages = picture_pages(pdf)
+        for image in pages:
+            blocks.append(image_placeholder("", image.key, f"rendered/page/{image.page_number}",
+                                            image.page_number))
+        final = tuple(Block(_key("hwp", index), block.kind, block.text, page_number=block.page_number,
+                            source_path=block.source_path, bbox=block.bbox, table_data=block.table_data,
+                            ocr_used=block.ocr_used, metadata=block.metadata) for index, block in enumerate(blocks))
+        return replace(direct, parser_name=self.name, parser_version=self.version, blocks=final,
+                       text="\n\n".join(block.text for block in final if block.text), images=tuple(pages),
+                       derived=(DerivedFile("pdf_render", pdf, f"rhwp {RHWP_VERSION}"),))

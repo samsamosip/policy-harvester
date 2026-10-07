@@ -511,13 +511,28 @@ class PdfRouteTests(unittest.TestCase):
         self.assertIn("apply by 2026-04-30 17:00", result.text)
         self.assertEqual(result.quality_flags, ("scanned_pages",))
 
-    def test_hwp_route_coverage_and_conversion(self):
+    def test_hwp_rendered_pages_needing_the_llm(self):
+        import io
         import shutil
 
-        from policy_harvester.documents.hwp_pdf import line_coverage
+        import pymupdf
+        from PIL import Image
+        from policy_harvester.documents.hwp_pdf import picture_pages
 
-        self.assertEqual(line_coverage("장학금 신청 안내\n신청 기간: 4월 30일", "장학금신청안내 신청기간:4월30일"), 1.0)
-        self.assertEqual(line_coverage("장학금 신청 안내\n제출 서류 목록", "장학금 신청 안내"), 0.5)
+        document = pymupdf.open()
+        document.new_page().insert_text((72, 72), "Text only page with enough characters to count.")
+        page = document.new_page()
+        page.insert_text((72, 72), "Page with a poster that holds the amounts.")
+        poster = io.BytesIO()
+        Image.new("RGB", (800, 600), "white").save(poster, "PNG")
+        page.insert_image(pymupdf.Rect(72, 100, 520, 440), stream=poster.getvalue())
+        document.new_page()  # blank: skipped
+        drawn = document.new_page()
+        drawn.draw_rect(pymupdf.Rect(50, 50, 300, 300))  # a form of lines: its text is in the parse
+        pages = picture_pages(document.tobytes())
+        self.assertEqual([image.page_number for image in pages], [2])
+        self.assertTrue(all(image.metadata["mode"] == "page_supplement" for image in pages))
+        self.assertIn("poster", pages[0].metadata["page_text"])
         if shutil.which("rhwp") is None:
             self.skipTest("rhwp is not installed here")
         from policy_harvester.documents.hwp_pdf import render_pdf
