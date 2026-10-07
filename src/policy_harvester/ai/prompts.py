@@ -225,7 +225,8 @@ REVIEW_SYSTEM_PROMPT = """당신은 인하대학교 장학 공고 수집 시스�
 [corrections]
 - path: target_version의 필드 이름(예: "eligibility_summary", "selection_capacity", "selection_capacity_scope"),
   또는 "windows/<id>/<필드>"(start_date, end_date: YYYY-MM-DD / start_time, end_time: HH:MM / raw_text, conditions_text),
-  또는 "benefits/<id>/<필드>"(amount_min, amount_max: 원 단위 숫자 / raw_text, conditions_text).
+  또는 "benefits/<id>/<필드>"(amount_min, amount_max: 원 단위 숫자 / amount_kind: fixed(정액), maximum(상한), range(범위),
+  variable(학생마다 다름), unknown / raw_text, conditions_text). 정액(fixed)은 금액 하나, 상한(maximum)은 amount_max가 있어야 합니다.
 - value: 고친 값 전체(문자열이면 고친 문장 전체). 값을 지우려면 null.
 - selection_capacity_scope는 final_selection(최종 선발 인원) 또는 university_nomination(학교 추천 인원)입니다.
 - quote: 고친 값의 근거가 되는 원문 표현.

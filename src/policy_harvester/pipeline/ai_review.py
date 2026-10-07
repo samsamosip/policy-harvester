@@ -87,8 +87,9 @@ COLUMN_CHOICES = {"selection_capacity_scope": {"final_selection", "university_no
 INTEGER_COLUMNS = {"selection_capacity", "academic_year"}
 WINDOW_FIELDS = {"start_date": "date", "end_date": "date", "start_time": "time", "end_time": "time",
                  "raw_text": "text", "conditions_text": "text"}
-BENEFIT_FIELDS = {"amount_min": "amount", "amount_max": "amount", "raw_text": "text",
-                  "conditions_text": "text"}
+BENEFIT_FIELDS = {"amount_kind": "amount_kind", "amount_min": "amount", "amount_max": "amount",
+                  "raw_text": "text", "conditions_text": "text"}
+AMOUNT_KINDS = {"fixed", "maximum", "range", "percentage", "formula", "variable", "unknown"}
 
 
 def remember_created(session: AsyncSession, review_id: uuid.UUID) -> None:
@@ -380,6 +381,7 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
         raise ActionRefused("only an unpublished draft can be corrected")
     done = []
     window_changes: dict[uuid.UUID, dict[str, Any]] = {}
+    benefit_changes: dict[uuid.UUID, dict[str, Any]] = {}
     for item in corrections:
         parts = item.path.strip("/").split("/")
         if len(parts) == 1:
@@ -407,21 +409,9 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
             if before is None:
                 raise ActionRefused(f"{item.path}: not a row of this version")
             before = before[0]
-            if table == "application_windows":  # written per row below, with its precision
-                window_changes.setdefault(row_id, {})[parts[2]] = value
-                done.append({"path": item.path, "before": _plain(before), "after": _plain(value),
-                             "quote": item.quote})
-                continue
-            if parts[2] in {"amount_min", "amount_max"}:
-                kind = (await session.execute(text(
-                    "SELECT amount_kind FROM inha_policy.benefits WHERE id=:row"), {"row": row_id})).scalar_one()
-                if kind == "fixed":  # a fixed amount is one number: both bounds move together
-                    await session.execute(text(
-                        "UPDATE inha_policy.benefits SET amount_min=:value, amount_max=:value WHERE id=:row"
-                    ), {"row": row_id, "value": value})
-            await session.execute(text(
-                f"UPDATE inha_policy.{table} SET {parts[2]}=:value WHERE id=:row"
-            ), {"row": row_id, "value": value})
+            # Rows are written once below, so a row never passes through a half-corrected state.
+            changes = window_changes if table == "application_windows" else benefit_changes
+            changes.setdefault(row_id, {})[parts[2]] = value
         else:
             raise ActionRefused(f"{item.path} is not correctable")
         done.append({"path": item.path, "before": _plain(before), "after": _plain(value), "quote": item.quote})
@@ -442,6 +432,18 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
         await session.execute(text(f"""
             UPDATE inha_policy.application_windows SET {", ".join(f"{key}=:{key}" for key in columns)}
             WHERE id=:row
+        """), {"row": row_id, **{key: current[key] for key in columns}})
+    for row_id, changes in benefit_changes.items():
+        current = dict((await session.execute(text("""
+            SELECT amount_kind, amount_min, amount_max FROM inha_policy.benefits WHERE id=:row
+        """), {"row": row_id})).mappings().one())
+        current.update(changes)
+        if current["amount_kind"] == "fixed":  # one number: a corrected bound moves the other
+            amount = changes.get("amount_max", changes.get("amount_min", current["amount_max"]))
+            current["amount_min"] = current["amount_max"] = amount
+        columns = sorted(set(changes) | {"amount_min", "amount_max"})
+        await session.execute(text(f"""
+            UPDATE inha_policy.benefits SET {", ".join(f"{key}=:{key}" for key in columns)} WHERE id=:row
         """), {"row": row_id, **{key: current[key] for key in columns}})
     await session.execute(text("""
         UPDATE inha_policy.opportunity_versions
@@ -474,6 +476,10 @@ def _coerce(kind: str, value: Any, path: str) -> Any:
             return date.fromisoformat(str(value))
         if kind == "time":
             return time.fromisoformat(str(value))
+        if kind == "amount_kind":
+            if value not in AMOUNT_KINDS:
+                raise ValueError(f"one of {sorted(AMOUNT_KINDS)}")
+            return value
         if kind == "amount":
             amount = Decimal(re.sub(r"[,\s원]", "", str(value)))
             if amount < 0:
