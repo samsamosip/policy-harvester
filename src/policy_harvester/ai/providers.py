@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import base64
 import json
+import re
 import time
 from contextvars import ContextVar
 from datetime import UTC, datetime
@@ -36,6 +37,13 @@ def is_transient(exc: BaseException) -> bool:
     if isinstance(exc, TransientProviderError):
         return True
     status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+    if not isinstance(status, int):
+        # An error event inside a stream arrives as a bare APIError: OpenRouter's gateway
+        # timeouts read "error code: 504" with no HTTP status attached.
+        code = getattr(exc, "code", None)
+        found = re.search(r"\berror code:?\s*(\d{3})\b", str(exc), flags=re.IGNORECASE)
+        status = int(code) if isinstance(code, int) or (isinstance(code, str) and code.isdigit()) \
+            else int(found.group(1)) if found else None
     if isinstance(status, int):
         return status in TRANSIENT_STATUS
     name = exc.__class__.__name__

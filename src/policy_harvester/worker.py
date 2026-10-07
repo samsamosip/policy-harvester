@@ -671,6 +671,9 @@ class Worker:
         await session.commit()
         try:
             result = await self._revalidate_failed_output(session, keys, backward)
+            # Nothing is pending: end the read transaction rather than hold it open (and the
+            # vacuum horizon back) for the minutes the model takes.
+            await session.commit()
             if result is None:
                 payload: dict[str, Any] = {
                     "blocks": [{"block_id": key, "text": value} for key, value in short_blocks.items()],

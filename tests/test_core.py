@@ -82,6 +82,18 @@ def ole_payload(streams: dict[tuple[str, ...], bytes]) -> bytes:
     return header + struct.pack("<128I", *fat) + directory + body
 
 
+class TransientErrorTests(unittest.TestCase):
+    def test_streamed_gateway_timeout_is_transient(self):
+        from policy_harvester.ai.providers import is_transient
+
+        class APIError(Exception):
+            code = None
+
+        self.assertTrue(is_transient(APIError("error code: 504")))
+        self.assertFalse(is_transient(APIError("Error code: 404 - model_not_found")))
+        self.assertFalse(is_transient(ValueError("invalid JSON")))
+
+
 class StorageAndDetectionTests(unittest.TestCase):
     def test_ole_structure_identifies_hwp_without_extension(self) -> None:
         hwp = ole_payload({("FileHeader",): b"HWP Document File".ljust(4096, b"\0"),
