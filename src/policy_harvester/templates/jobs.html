@@ -24,7 +24,7 @@
   <td>{{ chip('job_status', row.status) }}<div class="sub num">시도 {{ row.attempt_count }}/{{ row.max_attempts }}</div>
     {% if row.status == 'retry' %}<div class="sub num">다음 시도 {{ row.available_at|kst }}</div>{% endif %}</td>
   <td>{% if row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}#jobs">{{ row.notice_title or '공고' }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
-  <td class="small num" style="white-space:nowrap">{% if row.finished_at %}종료 {{ row.finished_at|kst }}{% elif row.started_at %}시작 {{ row.started_at|kst }}{% else %}등록 {{ row.created_at|kst }}{% endif %}</td>
+  <td class="small date">{{ job_time(row) }}</td>
   <td style="max-width:460px">
     {% if row.error_code and row.status == 'succeeded' %}<span class="small muted">이전 시도에서 오류가 있었지만 다시 시도해 완료했습니다.</span>
     {% elif row.error_code %}{% set help = error_help(row.error_code, row.error_message) %}

@@ -73,16 +73,37 @@ COLUMN_LABELS = {
 SEOUL_TZ = ZoneInfo("Asia/Seoul")
 
 
-def _kst(value: Any) -> str:
-    """Admin pages show times in Asia/Seoul, to the minute."""
+def _kst(value: Any, seconds: bool = False) -> str:
+    """Admin pages show times in Asia/Seoul, to the minute (or second)."""
     if isinstance(value, datetime):
         if value.tzinfo is not None:
             value = value.astimezone(SEOUL_TZ)
-        return value.strftime("%Y-%m-%d %H:%M")
+        return value.strftime("%Y-%m-%d %H:%M:%S" if seconds else "%Y-%m-%d %H:%M")
     return "" if value is None else str(value)
 
 
+def _duration(start: Any, end: Any) -> str:
+    minutes = int((end - start).total_seconds() // 60) if start and end else 0
+    return f"{minutes // 60}시간 {minutes % 60}분" if minutes >= 60 else f"{minutes}분"
+
+
+def _job_time(job: Any) -> str:
+    """What a job's time means depends on its state: queued, waiting to retry, running or done."""
+    status = job.get("status")
+    started = job.get("locked_at") or job.get("started_at")
+    if status == "running" and started:
+        return f"{_kst(started)} 시작 (대기열 {_duration(job.get('created_at'), started)})"
+    if status == "retry":
+        return f"{_kst(job.get('available_at'))} 재시도 예정"
+    if status == "queued":
+        return f"{_kst(job.get('created_at'))} 등록, 대기 중"
+    if job.get("finished_at"):
+        return f"{_kst(job.get('finished_at'))} 종료"
+    return f"{_kst(job.get('created_at'))} 등록"
+
+
 templates.env.filters["kst"] = _kst
+templates.env.globals["job_time"] = _job_time
 
 
 def _pretty_json(value: Any, indent: int | None = None) -> str:
@@ -404,6 +425,7 @@ async def jobs_page(request: Request, session: AsyncSession, admin: dict[str, An
     rows = (await session.execute(text("""
         SELECT j.id, j.stage, j.status, j.job_key, j.attempt_count, j.max_attempts, j.available_at,
                j.error_code, left(j.error_message, 2000) AS error_message, j.created_at, j.started_at,
+               j.locked_at,
                j.finished_at, j.payload, j.result_metadata, coalesce(nv.notice_id, j.notice_id) AS notice_id,
                nv.title AS notice_title, j.notice_version_id
         FROM inha_policy.crawl_jobs j

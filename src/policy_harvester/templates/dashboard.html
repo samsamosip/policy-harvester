@@ -53,19 +53,14 @@
     <h2>검토 대기 종류</h2>
     {% if reviews %}<div class="rows">{% for row in reviews %}<div class="row"><a href="/admin/reviews?kind={{ row.review_kind }}">{{ review_labels.get(row.review_kind, row.review_kind) }}</a><span class="end num">{{ row.count }}</span></div>
     {% endfor %}</div>{% else %}<p class="muted">대기 중인 검토가 없습니다.{% if ai_pending %} AI 2차 검토 중 {{ ai_pending }}건{% endif %}</p>{% endif %}
+  </section>
+  <section class="panel">
     <h2>최근 수집</h2>
     {% if runs %}<div class="rows">{% for run in runs %}<div class="row small">
       <span>{{ chip('run_status', run.status) }} {{ run.started_at|kst if run.started_at else '시작 전' }}</span>
       <span class="end num muted">확인 {{ run.discovered_count }} · 새·바뀐 공고 {{ run.changed_count }} · 실패 {{ run.failed_count }}</span></div>
     {% endfor %}</div>{% else %}<p class="muted">수집 기록이 없습니다.</p>{% endif %}
     <p class="small"><a href="/admin/table/crawl-runs">수집 이력 전체 보기 →</a></p>
-  </section>
-  <section class="panel">
-    <h2>최근 수집</h2>
-    {% if runs %}<div class="rows small">{% for run in runs %}<div class="row">
-      <span class="nowrap"><span class="chip {{ 'ok' if run.status == 'succeeded' else ('warn' if run.status in ['partial','running'] else 'bad') }}">{{ run.status }}</span> <span class="num">{{ run.started_at.strftime('%m-%d %H:%M') if run.started_at else '' }}</span></span>
-      <span class="end num muted">게시글 {{ run.discovered_count }} · 변경 {{ run.changed_count }} · 실패 {{ run.failed_count }}</span></div>
-    {% endfor %}</div>{% else %}<p class="muted">수집 기록이 없습니다.</p>{% endif %}
   </section>
   </div>
 </div>

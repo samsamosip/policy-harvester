@@ -74,7 +74,7 @@
     <section>
       <h2>LLM 요청·응답 원본</h2>
       <div class="table-wrap"><table><thead><tr><th>시각</th><th>용도</th><th>모델</th><th>결과</th><th class="r">걸린 시간</th><th class="r">토큰</th></tr></thead><tbody>
-      {% for x in exchanges %}<tr><td class="date small"><a href="/admin/llm-exchanges/{{ x.id }}">{{ x.started_at.strftime('%m-%d %H:%M:%S') }}</a></td>
+      {% for x in exchanges %}<tr><td class="date small"><a href="/admin/llm-exchanges/{{ x.id }}">{{ x.started_at|kst(true) }}</a></td>
         <td class="small">{{ label('exchange_purpose', x.purpose) }}</td>
         <td class="small">{{ x.model_id }}</td>
         <td>{{ chip('exchange_status', x.status) }}</td>
@@ -88,7 +88,7 @@
     <div class="table-wrap"><table><thead><tr><th>단계</th><th>상태</th><th>시각</th><th>오류</th><th></th></tr></thead><tbody>
     {% for job in jobs %}<tr><td>{{ chip('job_stage', job.stage) }}</td>
       <td>{{ chip('job_status', job.status) }}<div class="sub num">시도 {{ job.attempt_count }}/{{ job.max_attempts }}{% if job.status == 'retry' %} · 다음 {{ job.available_at|kst }}{% endif %}</div></td>
-      <td class="num small">{{ (job.finished_at or job.created_at)|kst }}</td>
+      <td class="date small">{{ job_time(job) }}</td>
       <td class="small prose">{% if job.error_code and job.status == 'succeeded' %}<span class="muted">이전 시도 오류 후 완료</span>{% elif job.error_code %}{% set help = error_help(job.error_code, job.error_message) %}<b class="{{ 'bad' if job.status == 'failed' else '' }}">{{ help.summary }}</b><div>{{ help.action }}</div><details><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ job.error_code }}: {{ job.error_message }}</pre></details>{% endif %}</td>
       <td class="row-action">{% if can_operate and job.status in ['failed', 'retry'] %}<form class="inline" method="post" action="/admin/jobs/{{ job.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재시도"><input type="hidden" name="next" value="/admin/notices/{{ notice.id }}"><button class="secondary small-btn">{{ '지금 재시도' if job.status == 'retry' else '재시도' }}</button></form>{% endif %}</td></tr>
     {% else %}<tr><td colspan="5" class="muted">작업이 없습니다.</td></tr>{% endfor %}

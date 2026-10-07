@@ -191,7 +191,7 @@ async def opportunity_list(request: Request, session: Session, admin: Viewer) ->
 @router.get("/notices", response_class=HTMLResponse)
 async def notice_list(request: Request, session: Session, admin: Viewer) -> HTMLResponse:
     q = request.query_params.get("q", "")
-    scope = request.query_params.get("scope", "included")
+    scope = request.query_params.get("scope", "all")
     stage = request.query_params.get("stage", "")
     page = max(1, int(request.query_params.get("page", "1") or 1))
     where = ["true"]
@@ -287,7 +287,8 @@ async def notice_detail(notice_id: uuid.UUID, request: Request, session: Session
     """), {"version": version_id})).mappings().all()
     jobs = (await session.execute(text("""
         SELECT id, stage, status, attempt_count, max_attempts, available_at, error_code,
-               left(error_message, 1000) AS error_message, created_at, finished_at, result_metadata
+               left(error_message, 1000) AS error_message, created_at, started_at, locked_at,
+               finished_at, result_metadata
         FROM inha_policy.crawl_jobs WHERE notice_version_id=:version ORDER BY created_at DESC LIMIT 60
     """), {"version": version_id})).mappings().all()
     body = (await session.execute(text("""
