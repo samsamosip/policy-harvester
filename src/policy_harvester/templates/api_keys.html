@@ -8,7 +8,7 @@
 {% if new_key %}<section class="panel"><h2>새 key: {{ new_key.name }}</h2>
   <div class="notice ok">이 key는 지금 한 번만 보입니다. 복사해서 안전한 곳에 보관하세요.</div>
   <div class="secret" aria-label="새 API key">{{ new_key.key }}</div>
-  <pre class="small" style="white-space:pre-wrap;margin:0">curl -H "X-API-Key: {{ new_key.key }}" "{{ request.base_url }}v1/opportunities?limit=5"</pre>
+  <pre class="code">curl -H "X-API-Key: {{ new_key.key }}" "{{ request.base_url }}v1/opportunities?limit=5"</pre>
 </section>{% endif %}
 <section class="panel"><h2>key 발급</h2>
   <form class="fields" method="post" action="/admin/api-keys"><input type="hidden" name="csrf" value="{{ csrf }}">
@@ -17,14 +17,14 @@
     <label class="field">유효 기간<select name="expires_days"><option value="0">만료 없음</option><option value="30">30일</option><option value="90" selected>90일</option><option value="365">1년</option></select></label>
     <button>발급</button>
   </form></section>
-<div class="table-wrap"><table><thead><tr><th>이름</th><th>Key</th><th>상태</th><th>한도</th><th>요청 수</th><th>마지막 사용</th><th>만료</th><th>발급</th><th></th></tr></thead><tbody>
+<div class="table-wrap"><table><thead><tr><th>이름</th><th>Key</th><th>상태</th><th class="r">한도</th><th class="r">요청 수</th><th>마지막 사용</th><th>만료</th><th>발급</th><th></th></tr></thead><tbody>
 {% for row in rows %}<tr>
-  <td>{{ row.name }}</td><td class="mono">{{ row.key_prefix }}…</td>
+  <td class="main">{{ row.name }}</td><td class="mono nowrap">{{ row.key_prefix }}…</td>
   <td><span class="chip {{ {'active': 'ok', 'revoked': 'bad', 'expired': 'warn'}[row.state] }}">{{ {'active': '사용 중', 'revoked': '폐기', 'expired': '만료'}[row.state] }}</span></td>
-  <td class="num">{{ row.rate_limit_per_minute }}/분</td><td class="num">{{ row.request_count }}</td>
-  <td class="num small">{{ row.last_used_at|kst or '—' }}</td><td class="num small">{{ row.expires_at|kst or '없음' }}</td>
-  <td class="small"><span class="num">{{ row.created_at|kst }}</span><div class="muted">{{ row.created_by_email or '' }}</div></td>
-  <td>{% if row.state == 'active' %}<form class="inline" method="post" action="/admin/api-keys/{{ row.id }}/revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="폐기 사유 (선택)" aria-label="폐기 사유"><button class="danger">폐기</button></form>{% endif %}</td>
+  <td class="num nowrap r">{{ row.rate_limit_per_minute }}/분</td><td class="num r">{{ row.request_count }}</td>
+  <td class="date small">{{ row.last_used_at|kst or '—' }}</td><td class="date small">{{ row.expires_at|kst or '없음' }}</td>
+  <td class="small"><span class="num nowrap">{{ row.created_at|kst }}</span><div class="muted">{{ row.created_by_email or '' }}</div></td>
+  <td class="row-action">{% if row.state == 'active' %}<form class="inline" method="post" action="/admin/api-keys/{{ row.id }}/revoke"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="폐기 사유 (선택)" aria-label="폐기 사유"><button class="danger">폐기</button></form>{% endif %}</td>
 </tr>{% else %}<tr><td colspan="9" class="empty">발급한 key가 없습니다.</td></tr>{% endfor %}
 </tbody></table></div>
 {% endblock %}

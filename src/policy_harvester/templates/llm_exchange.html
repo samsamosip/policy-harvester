@@ -2,7 +2,7 @@
 {% block head %}<style>
   .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px }
   .pair pre { max-height: calc(100vh - 260px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px }
-  @media (max-width: 1100px) { .pair { grid-template-columns: 1fr } }
+  @media (max-width: 1100px) { .pair { grid-template-columns: minmax(0, 1fr) } }
 </style>{% endblock %}
 {% block content %}
 <div class="page-head"><div>

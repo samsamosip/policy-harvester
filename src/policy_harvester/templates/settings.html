@@ -1,36 +1,60 @@
 {% extends "base.html" %}{% block title %}AI 설정 · Policy Harvester{% endblock %}
 {% macro control(key, item, spec) -%}
-<form class="inline" method="post" action="/admin/settings"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}">
+<form class="inline control" method="post" action="/admin/settings"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}">
   {% if spec.kind == 'choice' %}<select name="value" aria-label="{{ spec.label }}"><option value="">덮어쓰지 않음</option>{% for choice in spec.choices %}<option value="{{ choice }}"{% if item.source == 'admin_override' and item.value == choice %} selected{% endif %}>{{ (spec.labels or {}).get(choice, choice) }}</option>{% endfor %}</select>
   {% elif spec.kind == 'bool' %}<select name="value" aria-label="{{ spec.label }}"><option value="">덮어쓰지 않음</option><option value="true"{% if item.source == 'admin_override' and item.value %} selected{% endif %}>켜기</option><option value="false"{% if item.source == 'admin_override' and not item.value %} selected{% endif %}>끄기</option></select>
-  {% elif spec.kind == 'number' %}<input type="number" name="value" min="{{ spec.min }}" max="{{ spec.max }}" step="{{ spec.step }}" value="{{ item.value if item.source == 'admin_override' else '' }}" placeholder="{{ item.value if item.value is not none else '' }}" aria-label="{{ spec.label }}" style="width:130px">
-  {% else %}<input {% if spec.kind == 'url' %}type="url" {% endif %}{% if spec.suggest %}list="{{ spec.suggest }}" {% endif %}name="value" value="{{ item.value if item.source == 'admin_override' and item.value else '' }}" placeholder="{{ item.value if item.value is not none else '' }}" aria-label="{{ spec.label }}" style="min-width:320px">{% endif %}
+  {% elif spec.kind == 'number' %}<input type="number" name="value" min="{{ spec.min }}" max="{{ spec.max }}" step="{{ spec.step }}" value="{{ item.value if item.source == 'admin_override' else '' }}" placeholder="{{ item.value if item.value is not none else '' }}" aria-label="{{ spec.label }}" class="narrow">
+  {% else %}<input {% if spec.kind == 'url' %}type="url" {% endif %}{% if spec.suggest %}list="{{ spec.suggest }}" {% endif %}name="value" value="{{ item.value if item.source == 'admin_override' and item.value else '' }}" placeholder="{{ item.value if item.value is not none else '' }}" aria-label="{{ spec.label }}">{% endif %}
   <button>저장</button></form>
 {%- endmacro %}
+{% block head %}<style>
+  /* Each setting row: label, effective value, source, and a one-line edit form that fills its cell. */
+  /* Fixed layout so every group's table lines up in the same columns. */
+  table.settings { table-layout: fixed; min-width: 760px }
+  table.settings th:nth-child(1) { width: 25% } table.settings th:nth-child(2) { width: 27% } table.settings th:nth-child(3) { width: 104px }
+  table.settings td { vertical-align: middle; overflow-wrap: anywhere }
+  table.settings td code { white-space: normal; overflow-wrap: anywhere }
+  table.settings form.control { display: flex; width: 100% }
+  table.settings form.control > input, table.settings form.control > select { flex: 1 1 auto; min-width: 0; min-height: var(--ctl-sm) }
+  table.settings form.control > .narrow { flex: 0 1 9rem }
+  @media (max-width: 760px) {
+    table.settings, table.settings tbody { display: block; min-width: 0 }
+    table.settings thead { display: none }
+    table.settings tr { display: grid; grid-template-columns: minmax(0, 1fr) auto; gap: 6px 12px; padding: 14px 16px; border-bottom: 1px solid var(--line-2) }
+    table.settings tr:last-child { border-bottom: 0 }
+    table.settings td { padding: 0; border: 0; background: none !important }
+    table.settings td:nth-child(2) { grid-column: 1 / -1; grid-row: 2; color: var(--ink-2) }
+    table.settings td:nth-child(3) { grid-column: 2; grid-row: 1 }
+    table.settings td:nth-child(4) { grid-column: 1 / -1 }
+    table.settings form.control { min-width: 0 }
+    table.settings form.control > input, table.settings form.control > select { min-height: var(--ctl) }
+    table.settings form.control > button { min-height: var(--ctl) }
+  }
+</style>{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1>AI 설정</h1>
   <p class="lede">용도별로 provider, endpoint, 모델, API key를 정합니다. 값을 저장하면 .env 대신 이 값을 쓰고,
     <b>비우고 저장</b>하거나 .env와 같은 값을 저장하면 덮어쓰기가 지워져 .env 값(없으면 기본값)으로 돌아갑니다.
     endpoint를 바꾸면 그 묶음의 API key가 새 주소로 전송되니 주의하세요.</p></div></div>
 {% for group, title, description in groups %}
-<h2>{{ title }}</h2>{% if description %}<p class="muted small" style="margin:-4px 0 10px">{{ description }}</p>{% endif %}
-<div class="table-wrap"><table><thead><tr><th style="width:22%">항목</th><th style="width:30%">적용 중인 값</th><th style="width:10%">출처</th><th>변경</th></tr></thead><tbody>
+<h2>{{ title }}</h2>{% if description %}<p class="muted small">{{ description }}</p>{% endif %}
+<div class="table-wrap"><table class="settings"><thead><tr><th>항목</th><th>적용 중인 값</th><th>출처</th><th>변경</th></tr></thead><tbody>
 {% for key, item in effective.items() if inputs.get(key, {}).get('group', key.split('.')[0]) == group %}{% set spec = inputs.get(key, {'label': key, 'kind': 'text'}) %}
 <tr><td><div class="title">{{ spec.label }}</div><code class="small">{{ key }}</code></td>
-  <td style="overflow-wrap:anywhere">{% if spec.kind == 'bool' %}{{ '켜짐' if item.value else '꺼짐' }}{% elif item.value is none or item.value == '' %}<span class="muted">{{ '(LLM 설정 사용)' if group == 'extraction' else '없음' }}</span>{% else %}{{ item.value }}{% endif %}</td>
-  <td><span class="chip {{ 'brand' if item.source == 'admin_override' else '' }}">{{ {'admin_override': '관리자 설정', 'environment': '.env', 'application_default': '기본값'}.get(item.source, item.source) }}</span></td>
+  <td class="value">{% if spec.kind == 'bool' %}{{ '켜짐' if item.value else '꺼짐' }}{% elif item.value is none or item.value == '' %}<span class="muted">{{ '(LLM 설정 사용)' if group == 'extraction' else '없음' }}</span>{% else %}{{ item.value }}{% endif %}</td>
+  <td class="nowrap"><span class="chip {{ 'brand' if item.source == 'admin_override' else '' }}">{{ {'admin_override': '관리자 설정', 'environment': '.env', 'application_default': '기본값'}.get(item.source, item.source) }}</span></td>
   <td>{{ control(key, item, spec) }}</td></tr>
 {% endfor %}
 {% set secret = secrets.get(group) %}{% if secret %}
 <tr><td><div class="title">API key</div><code class="small">{{ secret.key }}</code></td>
-  <td class="mono">{{ secret.masked or '—' }}</td>
-  <td><span class="chip {{ {'admin': 'brand', 'missing': 'bad'}.get(secret.source, '') }}">{{ {'admin': '관리자 설정', 'environment': '.env', 'fallback': 'LLM key 공유', 'missing': '없음'}[secret.source] }}</span>{% if secret.updated_at %}<div class="muted small num">{{ secret.updated_at|kst }}</div>{% endif %}</td>
-  <td><form class="inline" method="post" action="/admin/secrets"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ secret.key }}">
-    <input type="password" name="value" autocomplete="new-password" placeholder="새 key (비우면 .env 사용)" aria-label="{{ title }} API key" style="min-width:320px"><button>저장</button></form></td></tr>
+  <td class="value mono">{{ secret.masked or '—' }}</td>
+  <td class="nowrap"><span class="chip {{ {'admin': 'brand', 'missing': 'bad'}.get(secret.source, '') }}">{{ {'admin': '관리자 설정', 'environment': '.env', 'fallback': 'LLM key 공유', 'missing': '없음'}[secret.source] }}</span>{% if secret.updated_at %}<div class="muted small num">{{ secret.updated_at|kst }}</div>{% endif %}</td>
+  <td><form class="inline control" method="post" action="/admin/secrets"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ secret.key }}">
+    <input type="password" name="value" autocomplete="new-password" placeholder="새 key (비우면 .env 사용)" aria-label="{{ title }} API key"><button>저장</button></form></td></tr>
 {% endif %}
 </tbody></table></div>
 {% if group == 'embedding' %}{% set st = embedding_status %}
-<section class="panel" id="embedding" style="margin-top:12px">
+<section class="panel" id="embedding">
   <h2>검색 색인</h2>
   <dl class="kv">
     <dt>검색에 쓰는 색인</dt><dd>{% if st.active %}<code>{{ st.active.profile_key }}</code>{% else %}<span class="bad">없음 — 의미(벡터) 검색이 꺼져 있습니다</span>{% endif %}</dd>
@@ -46,6 +70,6 @@
 {% endif %}
 {% endfor %}
 <h2>연결 확인</h2>
-<section class="panel"><form method="post" action="/admin/settings/test/llm"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">LLM 연결 테스트</button></form>
+<section class="panel toolbar"><form method="post" action="/admin/settings/test/llm"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">LLM 연결 테스트</button></form>
   <form method="post" action="/admin/settings/test/embedding"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">Embedding 연결 테스트</button></form></section>
 {% endblock %}

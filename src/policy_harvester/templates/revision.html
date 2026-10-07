@@ -1,10 +1,14 @@
 {% extends "base.html" %}{% block title %}Revision 검토 · Policy Harvester{% endblock %}
+{% block head %}<style>
+  .patch { border-top: 1px solid var(--line-2); padding-top: 10px; margin-top: 10px }
+  .patch code { white-space: pre-wrap }
+</style>{% endblock %}
 {% block content %}
 <h1>Revision 검토</h1>
 <p class="muted">정정·연장 공고: <b>{{ review.title }}</b> · 상태 {{ review.status }} · 관측 {{ review.observed_at }}</p>
 <p class="muted">LLM 제안은 후보일 뿐이다. 같은 사업·회차·필드 범위와 새 값을 원문에서 직접 확인한 경우에만 적용한다.</p>
 
-<div class="panel" style="margin-bottom:16px">
+<div class="panel">
   <h2>1. 대상 opportunity 선택</h2>
   <form method="get" class="inline">
     <select name="opportunity_id" required>
@@ -14,7 +18,7 @@
   </form>
 </div>
 
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px">
+<div class="cols wide">
   <div class="panel">
     <h2>Before: 대상의 최신 version</h2>
     {% if before %}
@@ -35,7 +39,7 @@
     <h3>같은 회차 근거</h3>
     {% for ref in payload.same_cycle_evidence %}<p><code>{{ ref.block_id }}</code> “{{ ref.quote }}”</p>{% else %}<p class="bad">같은 회차 근거 없음</p>{% endfor %}
     <h3>Patch 후보</h3>
-    {% for patch in payload.patches %}<div style="border-top:1px solid var(--line);padding-top:8px">
+    {% for patch in payload.patches %}<div class="patch">
       <p><b>{{ patch.field_path }}</b> ({{ patch.scope_key }})</p>
       <p>이전 주장: <code>{{ patch.previous_value|pretty_json }}</code> → 새 값: <code>{{ patch.replacement_value|pretty_json }}</code></p>
       {% for ref in patch.evidence %}<p><code>{{ ref.block_id }}</code> “{{ ref.quote }}”<br><span class="muted">{{ evidence_blocks.get(ref.block_id) or '(block 없음)' }}</span></p>{% endfor %}
@@ -44,11 +48,11 @@
 </div>
 
 {% if before and review.status in ['open', 'in_review'] %}
-<div class="panel" style="margin-top:16px">
+<div class="panel">
   <h2>2. 새 immutable version 생성</h2>
   <p class="muted">지원 path: <code>/application_windows/&lt;window_key&gt;/end</code>·<code>/start</code> (값 <code>{"date":"2026-10-08","time":"17:00"}</code>), <code>/title</code>, <code>/summary</code>, <code>/source_status_override</code> (<code>"cancelled"</code> 등).
   <code>supersedes_evidence_ids</code>를 생략하면 같은 field의 기존 근거가 자동 대체 대상이 된다.</p>
-  <form method="post" action="/admin/opportunities/{{ opportunity_id }}/revisions" style="display:grid;gap:8px;max-width:980px">
+  <form class="grid" method="post" action="/admin/opportunities/{{ opportunity_id }}/revisions">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="review_id" value="{{ review.id }}">
     <input type="hidden" name="notice_version_id" value="{{ review.entity_id }}">
@@ -61,9 +65,9 @@
     <label>Patches (JSON)
       <textarea name="patches_json" rows="8" required>[{% for patch in payload.patches %}{"field_path": {{ patch.field_path|pretty_json }}, "scope_key": {{ patch.scope_key|pretty_json }}, "value": {{ patch.replacement_value|pretty_json }}, "block_id": {{ ((patch.evidence or [{}])[0].block_id or '')|pretty_json }}, "quote": {{ ((patch.evidence or [{}])[0].quote or '')|pretty_json }}}{% if not loop.last %},
 {% endif %}{% endfor %}]</textarea></label>
-    <label><input type="checkbox" name="same_cycle_verified"> 같은 사업·연도·회차임을 원문으로 확인했다</label>
-    <label><input type="checkbox" name="same_scope_verified"> 같은 접수 단계·대상·채널(field 범위)임을 확인했다</label>
-    <label><input type="checkbox" name="new_value_verified"> 새 값을 원문에서 직접 확인했다</label>
+    <label class="check"><input type="checkbox" name="same_cycle_verified"> 같은 사업·연도·회차임을 원문으로 확인했다</label>
+    <label class="check"><input type="checkbox" name="same_scope_verified"> 같은 접수 단계·대상·채널(field 범위)임을 확인했다</label>
+    <label class="check"><input type="checkbox" name="new_value_verified"> 새 값을 원문에서 직접 확인했다</label>
     <textarea name="reason" placeholder="판단 근거 (선택)"></textarea>
     <button>새 version 생성 (draft)</button>
   </form>
