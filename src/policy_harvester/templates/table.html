@@ -16,7 +16,7 @@
     {%- elif table_key == 'documents' and column == 'document' %}<a href="/admin/documents/{{ row.id }}">{{ value }}</a>
     {%- elif column == 'notice' and row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}">{{ value }}</a>
     {%- elif column == 'opportunity' and row.opportunity_id %}<a href="/admin/opportunities/{{ row.opportunity_id }}">{{ value or '장학' }}</a>
-    {%- elif column == 'model_id' %}{{ value }}{% if row.provider_name %}<div class="sub">{{ row.provider_name }}</div>{% endif %}
+    {%- elif column == 'model_id' %}<span title="{{ row.provider_name or '' }}">{{ value }}</span>
     {%- elif column == 'field_path' %}<span title="{{ value }}">{{ field_label(value) }}</span>
     {%- elif column == 'quality_flags' %}{% for flag in value or [] %}<span class="chip" title="{{ flag }}">{{ quality_flag(flag) }}</span> {% endfor %}
     {%- elif column in ['error_code', 'error_summary'] and value %}{% set help = error_help(value if column == 'error_code' else '', row.error_message if column == 'error_code' else value) %}

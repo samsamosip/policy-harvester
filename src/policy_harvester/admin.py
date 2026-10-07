@@ -1422,6 +1422,11 @@ async def publish(version_id: uuid.UUID, request: Request, session: Session,
     """), {"id": version_id})).mappings().one_or_none()
     if row is None:
         raise HTTPException(404)
+    lifecycle = (await session.execute(text(
+        "SELECT lifecycle_status FROM inha_policy.opportunities WHERE id=:id"
+    ), {"id": row["opportunity_id"]})).scalar_one()
+    if lifecycle == "merged":  # publishing used to undo the merge silently
+        raise HTTPException(409, "병합된 장학은 공개할 수 없습니다. 대표 장학에서 공개하거나, 먼저 장학 화면에서 병합을 취소하세요.")
     embedded = (await session.execute(text("""
         SELECT EXISTS (SELECT 1 FROM inha_policy.search_chunks
                        WHERE opportunity_version_id=:id AND embedding_status='succeeded')

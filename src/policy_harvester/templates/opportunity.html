@@ -28,7 +28,9 @@
       {% if opportunity.lifecycle_status != 'active' %}{{ chip('lifecycle', opportunity.lifecycle_status) }}{% endif %}
       <span class="muted small">버전 {{ version.version_no }} ({{ label('edit_kind', version.edit_kind) }}) · {{ version.created_at|kst }}</span>
     </p>
-    {% if version.quality_flags %}<ul class="small muted" style="margin:4px 0 0;padding-left:18px">{% for flag in version.quality_flags %}<li title="{{ flag }}">{{ quality_flag(flag) }}</li>{% endfor %}</ul>{% endif %}
+    {% set notes = (version.quality_flags or [])|map('quality_flag')|unique|list %}
+    {% if notes %}<ul class="small muted" style="margin:4px 0 0;padding-left:18px">{% for note in notes[:3] %}<li>{{ note }}</li>{% endfor %}</ul>
+      {% if notes|length > 3 %}<details class="small muted"><summary>품질 메모 {{ notes|length - 3 }}건 더 보기</summary><ul style="margin:4px 0 0;padding-left:18px">{% for note in notes[3:] %}<li>{{ note }}</li>{% endfor %}</ul></details>{% endif %}{% endif %}
   </div>
 </div>
 {% if merged_into %}<div class="notice">이 장학은 <a href="/admin/opportunities/{{ merged_into.id }}">{{ merged_into.title }}</a>에 병합되었습니다. 공개 API는 그 장학으로 안내합니다. 잘못 병합했다면 오른쪽 '병합 취소'를 쓰세요.</div>{% endif %}
@@ -128,7 +130,9 @@
     <h2>작업</h2>
     {% if versions|length > 1 %}<div class="small">버전: {% for v in versions %}<a href="?version={{ v.version_no }}"{% if v.version_no == version.version_no %} style="font-weight:700" aria-current="page"{% endif %} title="{{ label('edit_kind', v.edit_kind) }} · {{ label('publication', v.publication_state) }}">v{{ v.version_no }}</a> {% endfor %} · <a href="/admin/opportunities/{{ opportunity.id }}/diff">최근 두 버전 비교</a></div>{% endif %}
     {% if admin.role in ['reviewer','admin'] %}
-      {% if version.publication_state == 'draft' %}
+      {% if version.publication_state == 'draft' and opportunity.lifecycle_status == 'merged' %}
+      <p class="small muted">병합된 장학이라 공개할 수 없습니다. 대표 장학에서 공개하거나, 먼저 병합을 취소하세요.</p>
+      {% elif version.publication_state == 'draft' %}
       <form class="action" method="post" action="/admin/opportunity-versions/{{ version.id }}/publish"><input type="hidden" name="csrf" value="{{ csrf }}">
         <label for="publish-reason">원문과 대조해 내용이 맞으면 공개하세요. 공개 API에 바로 나갑니다.</label><input id="publish-reason" name="reason" value="원문 대조 확인" placeholder="사유 (선택)"><button>이 버전 공개</button>
         {% if not embedded %}<span class="small muted">검색 색인이 아직 없어 지금은 공개되지 않습니다.</span>{% endif %}</form>

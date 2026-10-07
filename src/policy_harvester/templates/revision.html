@@ -40,7 +40,7 @@
     {% else %}<p class="muted">1단계에서 장학을 고르면 현재 값과 근거가 여기에 나옵니다.</p>{% endif %}
   </div>
   <div class="panel">
-    <h2>AI 제안: {{ KINDS.get(payload.kind, payload.kind) }} <span class="small muted">(확신 {{ {'high': '높음', 'medium': '보통', 'low': '낮음'}.get(payload.confidence, payload.confidence) }})</span></h2>
+    <h2>AI 제안: {{ KINDS.get(payload.kind, payload.kind) }} <span class="small muted">(확신 {% if payload.confidence is number %}{{ (payload.confidence * 100)|round|int }}%{% else %}{{ {'high': '높음', 'medium': '보통', 'low': '낮음'}.get(payload.confidence, payload.confidence) }}{% endif %})</span></h2>
     <h3>정정·연장임을 밝힌 문장</h3>
     {% for ref in payload.marker_evidence %}<p>“{{ ref.quote }}”<br><span class="muted small">원문 블록: {{ evidence_blocks.get(ref.block_id) or '(블록을 찾지 못함)' }}</span></p>{% else %}<p class="bad">근거 문장이 없습니다. 원문에서 직접 찾아야 합니다.</p>{% endfor %}
     <h3>같은 회차라는 근거</h3>

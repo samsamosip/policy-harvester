@@ -257,7 +257,9 @@ FIELD_NAMES = {
 
 def field_label(path: str) -> str:
     """"/opportunities/0/required_documents/3/evidence/0" -> "제출 서류 4번째"."""
-    parts = [part for part in str(path).strip("/").split("/") if part]
+    # Also "application_windows[local_key=application].end.value" as AI proposals write it.
+    plain = re.sub(r"\[[^\]]*\]", "", str(path))
+    parts = [part for part in re.split(r"[/.]", plain.strip("/")) if part]
     if len(parts) >= 2 and parts[0] == "opportunities" and parts[1].isdigit():
         parts = parts[2:]
     words: list[str] = []
@@ -376,6 +378,7 @@ ERROR_PAGE_TITLES = {
 
 
 def register(env: Any) -> None:
+    env.filters["quality_flag"] = quality_flag
     env.globals.update(label=label, tone=tone, chip=chip, error_help=error_help, field_label=field_label,
                        quality_flag=quality_flag, audit_action=lambda value: AUDIT_ACTIONS.get(value, value),
                        actor_name=lambda value: ACTOR_NAMES.get(value, value), flash_message=message,
