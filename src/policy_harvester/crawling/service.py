@@ -108,7 +108,7 @@ class CrawlService:
                 except Exception as exc:
                     logger.exception("notice collection failed", extra={"external_id": external_id})
                     stats["failed"] += 1
-                    error_summary = str(exc)
+                    error_summary = f"공고 {external_id} 수집 실패 — {exc.__class__.__name__}: {exc}"
                     await self.session.rollback()
             if stats["listing_complete"]:
                 await self._mark_missing(source, run_id, set(discovered), stats)
@@ -116,11 +116,11 @@ class CrawlService:
                 status = "partial" if stats["fetched"] else "failed"
         except asyncio.CancelledError:
             await self.session.rollback()
-            status, error_summary, cancelled = "cancelled", "crawl cancelled", True
+            status, error_summary, cancelled = "cancelled", "수집이 취소되었습니다(프로세스 중지).", True
         except Exception as exc:
             logger.exception("crawl failed", extra={"source_key": source_key})
             await self.session.rollback()
-            status, error_summary = "failed", str(exc)
+            status, error_summary = "failed", f"{exc.__class__.__name__}: {exc}"
         await self.session.execute(text("""
             UPDATE inha_policy.crawl_runs SET status=:status, finished_at=now(),
               discovered_count=:discovered, fetched_count=:fetched, changed_count=:changed,
@@ -204,7 +204,7 @@ class CrawlService:
         await self.session.execute(text("""
             UPDATE inha_policy.review_items
             SET status='resolved', resolved_at=now(), updated_at=now(),
-                resolution_note='resolved automatically: a later crawl parsed this notice'
+                resolution_note='자동으로 닫힘: 이후 수집에서 이 공고를 정상적으로 읽었습니다.'
             WHERE entity_type='notice' AND entity_id=:notice AND review_kind='parsing_failed'
               AND status IN ('open', 'in_review') AND payload->>'stage'='detail'
         """), {"notice": notice_id})

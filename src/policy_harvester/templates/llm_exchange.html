@@ -8,18 +8,18 @@
 <div class="page-head"><div>
   <div class="crumbs"><a href="/admin/notices">공고 목록</a>{% if exchange.notice_id %} / <a href="/admin/notices/{{ exchange.notice_id }}">{{ exchange.title }}</a>{% endif %}</div>
   <h1>LLM 호출 원본</h1>
-  <p class="lede">provider에 보낸 요청 body와 받은 응답 body를 가공 없이 보여줍니다. 실패한 호출은 오류와 provider 오류 body를 남깁니다.</p>
+  <p class="lede">AI 서비스에 보낸 요청과 받은 응답을 가공 없이 보여 줍니다. AI 추출 결과가 이상할 때 모델이 실제로 무엇을 받고 무엇을 답했는지 확인하는 용도입니다. 실패한 호출은 오류 내용도 함께 남습니다.</p>
 </div></div>
 <dl class="panel kv">
-  <dt>용도</dt><dd>{{ {'extraction': 'AI 추출', 'repair': 'JSON 수리', 'transcription': '이미지 전사'}.get(exchange.purpose, exchange.purpose) }}</dd>
-  <dt>모델</dt><dd>{{ exchange.provider_name }} · {{ exchange.model_id }}</dd>
-  <dt>결과</dt><dd><span class="chip {{ 'ok' if exchange.status == 'ok' else 'bad' }}">{{ exchange.status }}</span> {{ ((exchange.latency_ms or 0) / 1000)|round(1) }}초 · 토큰 {{ exchange.input_tokens or '-' }} / {{ exchange.output_tokens or '-' }}</dd>
-  <dt>시각</dt><dd>{{ exchange.started_at }}</dd>
-  {% if exchange.extraction_run_id %}<dt>추출 실행</dt><dd class="mono small">{{ exchange.extraction_run_id }}</dd>{% endif %}
-  {% if exchange.error_message %}<dt>오류</dt><dd class="bad">{{ exchange.error_message }}</dd>{% endif %}
+  <dt>용도</dt><dd>{{ label('exchange_purpose', exchange.purpose) }}</dd>
+  <dt>모델</dt><dd>{{ exchange.model_id }} <span class="muted small">({{ exchange.provider_name }})</span></dd>
+  <dt>결과</dt><dd>{{ chip('exchange_status', exchange.status) }} {{ ((exchange.latency_ms or 0) / 1000)|round(1) }}초 걸림 · 토큰 입력 {{ exchange.input_tokens or '-' }} / 출력 {{ exchange.output_tokens or '-' }}</dd>
+  <dt>시각</dt><dd>{{ exchange.started_at|kst }}</dd>
+  {% if exchange.extraction_run_id %}<dt>AI 추출 실행</dt><dd class="small">{% if exchange.notice_id %}<a href="/admin/notices/{{ exchange.notice_id }}#runs">공고 화면의 AI 추출 실행 목록</a> {% endif %}<span class="mono muted" title="{{ exchange.extraction_run_id }}">{{ (exchange.extraction_run_id|string)[:8] }}</span></dd>{% endif %}
+  {% if exchange.error_message %}{% set help = error_help('', exchange.error_message) %}<dt>오류</dt><dd><b class="bad">{{ help.summary }}</b> {{ help.action }}<pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ exchange.error_message }}</pre></dd>{% endif %}
 </dl>
 <div class="pair">
-  <section><h2>요청 <a class="small" href="/admin/llm-exchanges/{{ exchange.id }}/request.json">JSON 받기</a></h2><pre class="panel">{{ request_body }}</pre></section>
-  <section><h2>응답 {% if response_body %}<a class="small" href="/admin/llm-exchanges/{{ exchange.id }}/response.json">JSON 받기</a>{% endif %}</h2>{% if response_body %}<pre class="panel">{{ response_body }}</pre>{% else %}<div class="panel empty">응답 없음</div>{% endif %}</section>
+  <section><h2>보낸 요청 <a class="small" href="/admin/llm-exchanges/{{ exchange.id }}/request.json">JSON 받기</a></h2><pre class="panel">{{ request_body }}</pre></section>
+  <section><h2>받은 응답 {% if response_body %}<a class="small" href="/admin/llm-exchanges/{{ exchange.id }}/response.json">JSON 받기</a>{% endif %}</h2>{% if response_body %}<pre class="panel">{{ response_body }}</pre>{% else %}<div class="panel empty">받은 응답이 없습니다(연결 실패나 시간 초과).</div>{% endif %}</section>
 </div>
 {% endblock %}

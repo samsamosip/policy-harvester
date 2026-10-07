@@ -1,0 +1,42 @@
+{% extends "base.html" %}{% block title %}작업 큐 · Policy Harvester{% endblock %}
+{% set OUTCOMES = {'dismissed': '문제 없음으로 닫음', 'corrected': '값을 고치고 닫음', 'merged': '같은 장학을 병합함', 'revised': '정정·연장을 적용함', 'escalated': '사람 검토로 넘김'} %}
+{% macro tab_link(value) %}?status={{ value }}{% if stage %}&stage={{ stage }}{% endif %}{% endmacro %}
+{% block content %}
+<div class="page-head"><div><h1>작업 큐</h1>
+  <p class="lede">공고는 파싱 → AI 추출 → (필요하면 AI 2차 검토) → 임베딩 순서로 처리됩니다. 작업 처리기(worker)가 대기 중인 작업을 차례로 실행하고,
+    실패하면 정해진 횟수까지 자동으로 다시 시도합니다. <b>실패</b>는 자동 재시도를 모두 쓴 작업이라 원인을 확인한 뒤 직접 재시도해야 합니다.</p></div>
+  <div class="muted num">{% if rows|length >= 300 %}최근 300건 표시{% else %}{{ rows|length }}건{% endif %}</div></div>
+<div class="tabs" aria-label="상태">
+  <a class="{% if not status %}on{% endif %}" href="{{ tab_link('') }}">전체 {{ total }}</a>
+  {% for value in ['failed', 'retry', 'queued', 'running', 'succeeded'] %}<a class="{% if status == value %}on{% endif %}" href="{{ tab_link(value) }}">{{ label('job_status', value) }} {{ counts.get(value, 0) }}</a>{% endfor %}
+</div>
+<form class="filters" method="get">
+  <input type="hidden" name="status" value="{{ status }}">
+  <select name="stage" aria-label="단계"><option value="">모든 단계</option>{% for value in ['parse_document', 'structure', 'review', 'embed'] %}<option value="{{ value }}"{% if stage == value %} selected{% endif %}>{{ label('job_stage', value) }}</option>{% endfor %}</select>
+  <button>적용</button>
+</form>
+{% if rows %}
+<div class="table-wrap"><table>
+<thead><tr><th>단계</th><th>상태</th><th>공고</th><th>시각</th><th>오류·결과</th><th></th></tr></thead>
+<tbody>
+{% for row in rows %}<tr>
+  <td>{{ chip('job_stage', row.stage) }}<div class="sub mono" title="작업 ID {{ row.id }} · {{ row.job_key }}">{{ (row.id|string)[:8] }}</div></td>
+  <td>{{ chip('job_status', row.status) }}<div class="sub num">시도 {{ row.attempt_count }}/{{ row.max_attempts }}</div>
+    {% if row.status == 'retry' %}<div class="sub num">다음 시도 {{ row.available_at|kst }}</div>{% endif %}</td>
+  <td>{% if row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}#jobs">{{ row.notice_title or '공고' }}</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+  <td class="small num" style="white-space:nowrap">{% if row.finished_at %}종료 {{ row.finished_at|kst }}{% elif row.started_at %}시작 {{ row.started_at|kst }}{% else %}등록 {{ row.created_at|kst }}{% endif %}</td>
+  <td style="max-width:460px">
+    {% if row.error_code and row.status == 'succeeded' %}<span class="small muted">이전 시도에서 오류가 있었지만 다시 시도해 완료했습니다.</span>
+    {% elif row.error_code %}{% set help = error_help(row.error_code, row.error_message) %}
+      <div class="{{ 'bad' if row.status == 'failed' else '' }}"><b>{{ help.summary }}</b></div>
+      <div class="small">{{ help.action }}</div>
+      <details class="small"><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ row.error_code }}: {{ row.error_message }}</pre></details>
+    {% elif row.stage == 'review' and row.result_metadata.outcome %}<span class="small">AI 판단: {{ OUTCOMES.get(row.result_metadata.outcome, row.result_metadata.outcome) }}</span>
+    {% endif %}
+    {% if row.status == 'succeeded' and row.result_metadata.previous_error %}<details class="small"><summary>이전 시도 오류</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ row.result_metadata.previous_error }}</pre></details>{% endif %}
+  </td>
+  <td class="row-action">{% if admin.role in ['operator','reviewer','admin'] and row.status in ['failed', 'retry'] %}<form class="inline" method="post" action="/admin/jobs/{{ row.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="작업 큐에서 재시도"><input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}"><button class="secondary small-btn">{{ '지금 재시도' if row.status == 'retry' else '재시도' }}</button></form>{% endif %}</td>
+</tr>{% endfor %}
+</tbody></table></div>
+{% else %}<div class="panel empty">{% if status == 'failed' %}실패한 작업이 없습니다.{% elif status %}이 상태의 작업이 없습니다.{% else %}작업이 없습니다. 수집이 끝나면 공고마다 작업이 생깁니다.{% endif %}</div>{% endif %}
+{% endblock %}

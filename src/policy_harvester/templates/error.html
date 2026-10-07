@@ -1,0 +1,18 @@
+{% extends "base.html" %}{% block title %}{{ title }} · Policy Harvester{% endblock %}
+{% macro body() %}
+<div class="page-head"><div>
+  <h1>{{ title }}</h1>
+  <p class="lede">{{ detail or '요청을 처리하지 못했습니다.' }}</p>
+</div></div>
+<section class="panel">
+  <p style="margin:0">{% if status == 409 %}다른 사람이 먼저 처리했거나 상태가 바뀌었을 수 있습니다. 이전 화면을 새로고침해 현재 상태를 확인하세요.
+  {% elif status == 422 %}입력한 값은 저장되지 않았습니다. 이전 화면으로 돌아가 값을 고친 뒤 다시 시도하세요.
+  {% elif status == 403 %}아무것도 바뀌지 않았습니다.
+  {% elif status == 404 %}목록에서 다시 찾아 보세요.
+  {% else %}아무것도 바뀌지 않았을 수 있습니다. 이전 화면에서 상태를 확인하세요.{% endif %}</p>
+  <p style="margin:12px 0 0"><a class="btn" href="{{ back }}">이전 화면으로</a> <a class="btn secondary" href="/admin">대시보드</a></p>
+  <p class="small muted" style="margin:12px 0 0">오류 코드 {{ status }}</p>
+</section>
+{% endmacro %}
+{% block content %}{{ body() }}{% endblock %}
+{% block anonymous %}{{ body() }}{% endblock %}

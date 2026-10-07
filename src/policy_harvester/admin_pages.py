@@ -18,6 +18,7 @@ from fastapi.responses import HTMLResponse, Response
 from sqlalchemy import text
 
 from .admin import Session, Viewer, _context, router, templates
+from .admin_text import LABELS
 from .config import get_settings
 from .storage import build_object_store
 
@@ -36,6 +37,9 @@ def won(value: Any) -> str:
     if amount >= 10000 and amount % 10000 == 0:
         return f"{amount // 10000:,}만원"
     return f"{amount:,}원"
+
+
+templates.env.filters["won"] = won
 
 
 def benefit_label(row: dict[str, Any]) -> str:
@@ -93,17 +97,14 @@ async def dashboard(request: Request, session: Session, admin: Viewer) -> HTMLRe
                r.changed_count, r.failed_count
         FROM inha_policy.crawl_runs r ORDER BY r.scheduled_for DESC LIMIT 5
     """))).mappings().all()
+    ai_pending = (await session.execute(text(
+        "SELECT count(*) FROM inha_policy.review_items WHERE status='ai_pending'"))).scalar_one()
     return templates.TemplateResponse(request, "dashboard.html", _context(
         request, admin, funnel=funnel, queue=queue, reviews=reviews, closing=closing[0], runs=runs,
-        review_labels=REVIEW_LABELS))
+        review_labels=REVIEW_LABELS, ai_pending=ai_pending))
 
 
-REVIEW_LABELS = {
-    "revision_candidate": "정정·연장 후보", "identity_uncertain": "동일성 확인",
-    "llm_validation_failed": "AI 추출 실패", "parsing_failed": "파싱 실패", "embedding_failed": "임베딩 실패",
-    "date_conflict": "날짜 충돌", "amount_conflict": "금액 충돌", "eligibility_conflict": "자격 충돌",
-    "ocr_failed": "판독 실패", "privacy_review": "개인정보 검토", "other": "품질 확인",
-}
+REVIEW_LABELS = {kind: words for kind, (words, _tone) in LABELS["review_kind"].items()}
 
 
 async def _opportunity_rows(session, filters: dict[str, str], limit: int, offset: int
@@ -285,8 +286,8 @@ async def notice_detail(notice_id: uuid.UUID, request: Request, session: Session
         FROM inha_policy.extraction_runs WHERE notice_version_id=:version ORDER BY started_at DESC
     """), {"version": version_id})).mappings().all()
     jobs = (await session.execute(text("""
-        SELECT id, stage, status, attempt_count, error_code, left(error_message, 200) AS error_message,
-               created_at, finished_at
+        SELECT id, stage, status, attempt_count, max_attempts, available_at, error_code,
+               left(error_message, 1000) AS error_message, created_at, finished_at, result_metadata
         FROM inha_policy.crawl_jobs WHERE notice_version_id=:version ORDER BY created_at DESC LIMIT 60
     """), {"version": version_id})).mappings().all()
     body = (await session.execute(text("""
@@ -300,8 +301,13 @@ async def notice_detail(notice_id: uuid.UUID, request: Request, session: Session
         FROM inha_policy.llm_exchanges WHERE notice_version_id=:version ORDER BY started_at DESC LIMIT 100
     """), {"version": version_id})).mappings().all()
     reviews = (await session.execute(text("""
-        SELECT id, review_kind, status, created_at FROM inha_policy.review_items
-        WHERE entity_id IN (:notice, :version) ORDER BY created_at DESC
+        SELECT r.id, r.review_kind, r.status, r.opportunity_id, r.created_at, r.resolution_note
+        FROM inha_policy.review_items r
+        WHERE r.entity_id IN (:notice, :version)
+           OR r.opportunity_id IN (SELECT ov.opportunity_id FROM inha_policy.opportunity_version_sources s
+                                   JOIN inha_policy.opportunity_versions ov ON ov.id=s.opportunity_version_id
+                                   WHERE s.notice_version_id=:version)
+        ORDER BY (r.status IN ('open', 'in_review', 'ai_pending')) DESC, r.created_at DESC LIMIT 30
     """), {"notice": notice_id, "version": version_id})).mappings().all()
     return templates.TemplateResponse(request, "notice.html", _context(
         request, admin, notice=notice, versions=versions, documents=documents, assets=assets,
@@ -367,7 +373,7 @@ async def asset_view(asset_id: uuid.UUID, session: Session, admin: Viewer) -> Re
             WHERE binary_asset_id=:id AND kind='pdf_render' ORDER BY created_at DESC LIMIT 1
         """), {"id": asset_id})).scalar_one_or_none()
         if rendered is None:
-            raise HTTPException(415, "this format cannot be shown in the browser; download it instead")
+            raise HTTPException(415, "이 파일 형식은 브라우저에서 바로 볼 수 없습니다. 원본을 내려받아 확인하세요.")
         storage_key, mime = rendered, "application/pdf"
     payload = build_object_store(get_settings()).get(storage_key)
     return Response(payload, media_type=mime, headers={

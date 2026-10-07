@@ -18,8 +18,9 @@ button:hover{background:var(--brand-hover);border-color:var(--brand-hover)}
 button:focus-visible{outline:2px solid var(--brand);outline-offset:2px}
 .bad{color:var(--bad);background:var(--bad-soft);border:1px solid var(--bad-line);border-left-width:4px;border-radius:8px;padding:10px 12px;font-size:13px}
 @media (max-width:420px){.box{padding:24px 20px}}
+.note{color:var(--ink-2);background:#eef4f8;border:1px solid #cfe0ea;border-left-width:4px;border-radius:8px;padding:10px 12px;font-size:13px}
 </style></head><body><form class="box" method="post"><div class="head"><div><h1>Policy Harvester</h1><p>인하대 장학 공고 수집·구조화 관리자</p></div></div>
-{% if error %}<p class="bad" role="alert">{{ error }}</p>{% endif %}
-<label for="email">이메일<input id="email" type="email" name="email" autocomplete="username" required autofocus></label>
+{% if error %}<p class="bad" role="alert">{{ error }}</p>{% elif request.query_params.get('logged_out') %}<p class="note" role="status">로그아웃했습니다.</p>{% elif request.query_params.get('expired') %}<p class="note" role="status">로그인이 만료되었거나 다른 곳에서 비밀번호가 바뀌었습니다. 다시 로그인하세요.</p>{% endif %}
+<label for="email">이메일<input id="email" type="email" name="email" value="{{ email or '' }}" autocomplete="username" required autofocus></label>
 <label for="password">비밀번호<input id="password" type="password" name="password" autocomplete="current-password" required></label>
 <button>로그인</button></form></body></html>

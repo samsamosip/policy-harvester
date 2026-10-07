@@ -75,12 +75,12 @@ class VerifiedRevision:
 def normalize_window_value(value: Any) -> dict[str, Any]:
     """Canonical JSON for a window bound: {"date", "time", "precision", "timezone"}."""
     if not isinstance(value, dict) or not value.get("date"):
-        raise RevisionError("window bounds need an object with an ISO date")
+        raise RevisionError('기간 값은 {"date": "YYYY-MM-DD", "time": "HH:MM"} 형식이어야 합니다')
     try:
         parsed_date = date.fromisoformat(str(value["date"]))
         parsed_time = time.fromisoformat(str(value["time"])) if value.get("time") else None
     except ValueError as exc:
-        raise RevisionError(f"invalid window bound: {exc}") from exc
+        raise RevisionError(f"기간 값을 읽을 수 없습니다: {exc}") from exc
     precision = "date" if parsed_time is None else ("second" if parsed_time.second else "minute")
     return {"date": parsed_date.isoformat(),
             "time": parsed_time.isoformat() if parsed_time else None,
@@ -97,37 +97,37 @@ class RevisionService:
 
     async def apply(self, revision: VerifiedRevision) -> uuid.UUID:
         if revision.kind not in KINDS:
-            raise RevisionError(f"kind must be one of {sorted(KINDS)}")
+            raise RevisionError(f"종류는 {sorted(KINDS)} 중 하나여야 합니다")
         if not (revision.same_cycle_verified and revision.same_scope_verified
                 and revision.new_value_verified):
-            raise RevisionError("same cycle, same scope and the new value must all be verified")
+            raise RevisionError("같은 회차, 같은 범위, 새 값 확인란 세 개를 모두 체크해야 합니다")
         if not revision.patches:
-            raise RevisionError("at least one patch is required")
+            raise RevisionError("바뀌는 값이 하나 이상 있어야 합니다")
         paths = [(patch.field_path, patch.scope_key) for patch in revision.patches]
         if len(paths) != len(set(paths)):
-            raise RevisionError("each field/scope can be patched once per revision")
+            raise RevisionError("같은 항목을 한 번에 두 번 바꿀 수 없습니다")
 
         opportunity = (await self.session.execute(text("""
             SELECT id, lifecycle_status FROM inha_policy.opportunities WHERE id=:id FOR UPDATE
         """), {"id": revision.opportunity_id})).mappings().one_or_none()
         if opportunity is None:
-            raise RevisionError("opportunity not found", 404)
+            raise RevisionError("대상 장학을 찾을 수 없습니다", 404)
         if opportunity["lifecycle_status"] == "merged":
-            raise RevisionError("apply amendments to the opportunity it was merged into", 409)
+            raise RevisionError("병합된 장학입니다. 병합된 대표 장학에 적용하세요", 409)
         base = (await self.session.execute(text("""
             SELECT * FROM inha_policy.opportunity_versions WHERE opportunity_id=:id
             ORDER BY version_no DESC LIMIT 1
         """), {"id": revision.opportunity_id})).mappings().one_or_none()
         if base is None:
-            raise RevisionError("opportunity has no version to amend", 409)
+            raise RevisionError("대상 장학에 고칠 버전이 없습니다", 409)
         notice = await self._amendment_notice(revision, base["id"])
         blocks = await self._blocks(revision.amendment_notice_version_id)
         for evidence in (revision.intent, *(patch.evidence for patch in revision.patches)):
             block = blocks.get(evidence.block_id)
             if block is None:
-                raise RevisionError(f"block {evidence.block_id} is not in the amendment's current documents")
+                raise RevisionError(f"블록 {evidence.block_id}은(는) 정정 공고의 현재 문서에 없습니다")
             if not evidence.quote.strip() or not _same_text(evidence.quote, block["text"]):
-                raise RevisionError(f"quote is absent from block {evidence.block_id}")
+                raise RevisionError(f"인용한 문장이 블록 {evidence.block_id}에 없습니다. 원문 그대로 옮겨 적었는지 확인하세요")
 
         patches = [self._normalized(patch) for patch in revision.patches]
         await self._check_targets(base["id"], patches)
@@ -145,11 +145,11 @@ class RevisionService:
                 by_id = {row["id"]: row for row in base_evidence}
                 missing = [item for item in patch.supersedes_evidence_ids if item not in by_id]
                 if missing:
-                    raise RevisionError(f"superseded evidence is not in the base version: {missing}")
+                    raise RevisionError(f"대체할 근거가 대상 버전에 없습니다: {missing}")
                 rows = [by_id[item] for item in patch.supersedes_evidence_ids]
             for row in rows:
                 if row["id"] in superseded:
-                    raise RevisionError(f"evidence {row['id']} would be superseded twice")
+                    raise RevisionError(f"근거 {row['id']}를 두 번 대체하게 됩니다")
                 superseded[row["id"]] = (patch, dict(row))
 
         decision_id = uuid.uuid4()
@@ -213,7 +213,7 @@ class RevisionService:
                 True, True, True, True)
             outcome = resolve_field(candidates, [directive] if old else [])
             if outcome.status not in {"resolved_explicit_update", "agreed"}:
-                raise RevisionError(f"{patch.field_path}: {'; '.join(outcome.reasons)}", 409)
+                raise RevisionError(f"{patch.field_path}: 적용 규칙에 맞지 않습니다 ({'; '.join(outcome.reasons)})", 409)
             resolution_id = uuid.uuid4()
             resolution_ids[(patch.field_path, patch.scope_key)] = resolution_id
             explicit = outcome.status == "resolved_explicit_update"
@@ -290,11 +290,11 @@ class RevisionService:
         """), {"id": revision.amendment_notice_version_id,
                  "run": revision.extraction_run_id})).mappings().one_or_none()
         if notice is None:
-            raise RevisionError("amendment notice version not found", 404)
+            raise RevisionError("정정 공고를 찾을 수 없습니다", 404)
         if notice["sealed_at"] is None:
-            raise RevisionError("amendment notice version is not sealed", 409)
+            raise RevisionError("정정 공고의 수집이 아직 끝나지 않았습니다", 409)
         if notice["run_status"] != "succeeded" or notice["run_sealed"] is None:
-            raise RevisionError("extraction run must be a sealed successful run of the amendment notice", 409)
+            raise RevisionError("정정 공고의 AI 추출이 성공적으로 끝난 뒤에만 적용할 수 있습니다", 409)
         same_notice = (await self.session.execute(text("""
             SELECT EXISTS (
               SELECT 1 FROM inha_policy.opportunity_version_sources s
@@ -302,7 +302,7 @@ class RevisionService:
               WHERE s.opportunity_version_id=:base AND nv.notice_id=:notice)
         """), {"base": base_id, "notice": notice["notice_id"]})).scalar_one()
         if same_notice:
-            raise RevisionError("the amendment notice is already a source; re-extract it instead", 409)
+            raise RevisionError("이 정정 공고는 이미 대상 장학의 출처입니다. 공고 화면에서 AI 재추출을 하세요", 409)
         return dict(notice)
 
     async def _blocks(self, notice_version_id: uuid.UUID) -> dict[uuid.UUID, dict[str, Any]]:
@@ -320,14 +320,14 @@ class RevisionService:
             value = normalize_window_value(patch.value)
         elif patch.field_path == "/source_status_override":
             if patch.value not in STATUS_OVERRIDES:
-                raise RevisionError(f"status override must be one of {sorted(STATUS_OVERRIDES)}")
+                raise RevisionError(f"상태 값은 {sorted(STATUS_OVERRIDES)} 중 하나여야 합니다")
             value = patch.value
         elif patch.field_path in SCALAR_PATHS:
             if not isinstance(patch.value, str) or not patch.value.strip():
-                raise RevisionError(f"{patch.field_path} needs a non-empty string")
+                raise RevisionError(f"{patch.field_path}: 빈 값은 넣을 수 없습니다")
             value = patch.value.strip()
         else:
-            raise RevisionError(f"unsupported patch path {patch.field_path}")
+            raise RevisionError(f"고칠 수 없는 항목입니다: {patch.field_path}")
         return FieldPatch(patch.field_path, value, patch.evidence, patch.supersedes_evidence_ids,
                           patch.scope_key)
 
@@ -338,7 +338,7 @@ class RevisionService:
         for patch in patches:
             match = WINDOW_PATH.match(patch.field_path)
             if match and match.group(1) not in keys:
-                raise RevisionError(f"window {match.group(1)} does not exist; known: {sorted(keys)}")
+                raise RevisionError(f"기간 key {match.group(1)}이(가) 없습니다. 있는 key: {sorted(keys)}")
 
     async def _canonical_evidence_paths(self, base_id: uuid.UUID) -> dict[str, str]:
         """Map extraction-relative evidence paths to the canonical paths patches use."""

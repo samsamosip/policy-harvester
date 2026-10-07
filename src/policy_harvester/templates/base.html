@@ -39,6 +39,7 @@
     p { margin: 0 0 10px } p:last-child { margin-bottom: 0 }
     ul { margin: 6px 0; padding-left: 20px }
     .num { font-variant-numeric: tabular-nums }
+    ul.bullets { margin: 4px 0 0; padding-left: 18px }
     .muted { color: var(--muted) } .small { font-size: 12px } .nowrap { white-space: nowrap } .pre-wrap { white-space: pre-wrap }
     .bad { color: var(--bad) } .ok { color: var(--ok) }
     .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap }
@@ -344,7 +345,7 @@
     {{ item('/admin/table/audit', '감사 로그') }}</div>
     {% endif %}
     <a class="item ext" href="/docs" target="_blank" rel="noopener"><span>API 문서 (Swagger)</span><span aria-hidden="true">↗</span></a>
-    <div class="me"><a class="me-link" href="/admin/account">{{ admin.display_name }} · {{ admin.role }}</a><div class="me-mail">{{ admin.email }}</div>
+    <div class="me"><a class="me-link" href="/admin/account" title="내 계정 · 비밀번호 변경">{{ admin.display_name }} · {{ label('role', admin.role) }}</a><div class="me-mail">{{ admin.email }}</div>
       <form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button>로그아웃</button></form></div>
 {% endmacro %}
 <header class="topbar">
@@ -357,7 +358,7 @@
     <a class="logo" href="/admin"><span>Policy Harvester<small>인하대 장학 공고 수집·구조화</small></span></a>
     {{ nav_links() }}
   </nav>
-  <main>{% block content %}{% endblock %}</main>
+  <main>{% include "_flash.html" %}{% block content %}{% endblock %}</main>
 </div>
 {% else %}
 <main>{% block anonymous %}{% endblock %}</main>

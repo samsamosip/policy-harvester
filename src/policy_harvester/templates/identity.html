@@ -1,45 +1,75 @@
-{% extends "base.html" %}{% block title %}동일성 검토 · Policy Harvester{% endblock %}
+{% extends "base.html" %}{% block title %}동일성 확인 · Policy Harvester{% endblock %}
+{% set SEMESTER = {'spring': '1학기', 'fall': '2학기', 'summer': '여름학기', 'winter': '겨울학기', 'annual': '연간', 'other': '기타', 'unknown': '미상'} %}
+{% set p = review.payload %}
+{% set is_open = review.status in ['open', 'in_review'] %}
 {% macro card(item) %}
   {% set v = item.version %}
-  <p><b>{{ v.title }}</b> <span class="muted">v{{ v.version_no }} · {{ v.lifecycle_status }}{% if v.current_version_id %} · 공개 중{% endif %} · {{ v.data_quality_status }}</span></p>
-  <p>기관 {{ v.provider_name or '미상' }} · 연도 {{ v.academic_year or '미상' }} · 학기 {{ v.academic_term or '미상' }}{% if v.round_label %} · 회차 {{ v.round_label }}{% endif %}</p>
-  <p class="muted">{{ v.summary or '' }}</p>
-  <h3>접수 기간</h3>
-  {% for w in item.windows %}<p><code>{{ w.window_key }}</code> {{ w.window_kind }}: {{ w.start_date or '?' }} {{ w.start_time or '' }} ~ {{ w.end_date or '?' }} {{ w.end_time or '' }}</p>{% else %}<p class="muted">없음</p>{% endfor %}
+  <p><a class="title" href="/admin/opportunities/{{ v.opportunity_id }}">{{ v.title }}</a></p>
+  <p class="small">{% if v.current_version_id %}<span class="chip ok">공개 중</span>{% else %}<span class="chip">공개 전</span>{% endif %}
+    {{ chip('quality', v.data_quality_status) }}{% if v.lifecycle_status != 'active' %} {{ chip('lifecycle', v.lifecycle_status) }}{% endif %}
+    <span class="muted">버전 {{ v.version_no }}</span></p>
+  <dl class="kv small">
+    <dt>기관</dt><dd>{{ v.provider_name or '미상' }}</dd>
+    <dt>연도·학기</dt><dd>{{ v.academic_year or '연도 미상' }} {{ SEMESTER.get(v.academic_term, v.academic_term or '') }}{% if v.round_label %} · {{ v.round_label }}{% endif %}</dd>
+  </dl>
+  {% if v.summary %}<p class="muted small">{{ v.summary }}</p>{% endif %}
+  <h3>신청 기간</h3>
+  {% for w in item.windows %}<p class="small">{{ label('window_kind', w.window_kind) }}: {{ w.start_date or '?' }} {{ (w.start_time|string)[:5] if w.start_time else '' }} ~ {{ w.end_date or '?' }} {{ (w.end_time|string)[:5] if w.end_time else '' }}</p>{% else %}<p class="muted small">없음</p>{% endfor %}
   <h3>지원 내용</h3>
-  {% for b in item.benefits %}<p>{{ b.benefit_kind }} {{ b.amount_min or '' }}{% if b.amount_max and b.amount_max != b.amount_min %}~{{ b.amount_max }}{% endif %} {{ b.currency or '' }} <span class="muted">{{ b.raw_text or '' }}</span></p>{% else %}<p class="muted">없음</p>{% endfor %}
-  <h3>출처</h3>
-  {% for s in item.sources %}<p>{{ s.relation_kind }} · <a href="{{ s.canonical_url }}" rel="noreferrer">{{ s.title }}</a></p>{% endfor %}
+  {% for b in item.benefits %}<p class="small">{{ label('benefit_kind', b.benefit_kind) }} {% if b.amount_min is not none and b.amount_max is not none and b.amount_min != b.amount_max %}{{ b.amount_min|won }}~{{ b.amount_max|won }}{% elif b.amount_max is not none %}{{ b.amount_max|won }}{% endif %} <span class="muted">{{ b.raw_text or '' }}</span></p>{% else %}<p class="muted small">없음</p>{% endfor %}
+  <h3>출처 공고</h3>
+  {% for s in item.sources %}<p class="small">{% if s.relation_kind != 'original' %}{{ chip('relation_kind', s.relation_kind) }} {% endif %}<a href="/admin/notices/{{ s.notice_id }}">{{ s.title }}</a> · <a href="{{ s.canonical_url }}" rel="noreferrer">원문 ↗</a></p>{% endfor %}
 {% endmacro %}
 {% block content %}
-<h1>동일성 검토</h1>
-<p class="muted">유사도는 후보를 찾는 용도일 뿐이다. 같은 사업·연도·회차·대상·접수 채널임을 원문으로 확인한 경우에만 병합한다. 다음 연도 같은 사업, 독립 추가모집은 병합하지 않는다.</p>
+<div class="page-head"><div>
+  <div class="crumbs"><a href="/admin/reviews">검토함</a> / 동일성 확인</div>
+  <h1>같은 장학인지 확인</h1>
+  <p class="lede">{% if p.operation == 'cross_notice_candidates' %}다른 공고에서 나온 비슷한 장학이 있어 병합 후보로 올라왔습니다.
+    {% elif p.operation == 'same_notice_unmatched' %}같은 공고를 다시 추출했더니 기존 장학과 이름이 달라 새 장학으로 만들어졌습니다.
+    {% elif p.operation == 'same_slot_renamed' %}같은 공고를 다시 추출했더니 장학 이름이 바뀌었습니다(기존 장학의 새 버전으로 이어 둠).
+    {% elif p.operation == 'split' %}관리자가 분리를 요청해 새로 만든 장학입니다.
+    {% else %}AI가 이 장학을 기존 장학과 관련 있다고 보았습니다.{% endif %}
+    유사도는 후보를 찾는 데만 씁니다. 같은 사업·연도·회차·대상·접수처임을 원문으로 확인한 경우에만 병합하세요. 다음 해의 같은 사업이나 별도 추가모집은 병합하지 않습니다.</p>
+</div></div>
+{% if not is_open %}<div class="notice">이 검토 항목은 이미 처리되었습니다({{ label('review_status', review.status) }}){% if review.resolution_note %}: {{ review.resolution_note }}{% endif %}. <a href="/admin/reviews">검토함으로 돌아가기</a></div>{% endif %}
+{% if p.ai_review and p.ai_review.reason %}<div class="panel small"><span class="chip info">AI 2차 검토 의견</span> {{ p.ai_review.reason }} <span class="muted">({{ p.ai_review.model }})</span>{% if p.ai_review.action_refused %}<div class="muted">{{ ACTION_REFUSED_HELP }}</div>{% endif %}</div>{% endif %}
+
 <div class="cols wide">
-  <div class="panel"><h2>검토 대상 (새 opportunity)</h2>{{ card(subject) }}</div>
+  <div class="panel"><h2>검토 대상</h2>{{ card(subject) }}
+    {% if is_open and admin.role in ['reviewer','admin'] %}
+    <form class="action" method="post" action="/admin/reviews/{{ review.id }}/resolve">
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/admin/reviews">
+      <label class="small muted" for="keep-reason">후보 중 같은 장학이 없으면 병합하지 않고 지금처럼 따로 둡니다.</label>
+      <textarea id="keep-reason" name="reason" rows="2" placeholder="다른 장학인 근거 (선택)"></textarea>
+      <button class="secondary">병합하지 않고 검토 완료</button>
+    </form>{% endif %}
+  </div>
   {% for c in candidates %}
   <div class="panel">
-    <h2>후보 {{ loop.index }}{% if c.meta.score %} · 유사도 {{ '%.2f'|format(c.meta.score) }}{% endif %}</h2>
-    {% if c.meta.reasons %}<p class="muted">{{ c.meta.reasons|join(', ') }}</p>{% endif %}
+    <h2>후보 {{ loop.index }}{% if c.meta.score %} <span class="small muted">유사도 {{ '%.2f'|format(c.meta.score) }}</span>{% endif %}</h2>
+    {% if c.meta.reasons %}<p class="muted small" title="자동 비교 근거">{{ c.meta.reasons|join(', ') }}</p>{% endif %}
     {{ card(c.card) }}
-    {% if c.decided %}<p class="ok">이미 처리됨: {{ c.decided }}</p>
-    {% elif review.status in ['open', 'in_review'] %}
+    {% if c.decided %}<p class="ok">이미 판정했습니다: {{ {'confirmed': '같은 장학으로 병합함', 'rejected': '다른 장학으로 판정함'}.get(c.decided, c.decided) }}</p>
+    {% elif is_open and admin.role in ['reviewer','admin'] %}
+    <details><summary>같은 장학이면 병합…</summary>
     <form class="action" method="post" action="/admin/opportunities/{{ subject.version.opportunity_id }}/merge">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="winner_id" value="{{ c.card.version.opportunity_id }}">
       {% if c.proposal_id %}<input type="hidden" name="proposal_id" value="{{ c.proposal_id }}">{% endif %}
-      <input type="hidden" name="review_id" value="{{ review.id }}">
-      <textarea name="reason" placeholder="같은 모집임을 확인한 근거 (선택)"></textarea>
-      <button>검토 대상을 이 후보로 병합</button>
-    </form>
+      <input type="hidden" name="review_id" value="{{ review.id }}"><input type="hidden" name="next" value="/admin/reviews">
+      <span class="small muted">검토 대상을 이 후보에 합칩니다. 후보가 대표 장학으로 남고, 검토 대상은 '병합됨'이 되며 이 검토 항목은 완료됩니다. 잘못 병합하면 장학 화면에서 취소할 수 있습니다.</span>
+      <textarea name="reason" rows="2" placeholder="같은 모집임을 확인한 근거 (선택)"></textarea>
+      <button class="danger">검토 대상을 이 후보에 병합</button>
+    </form></details>
     {% if c.proposal_id %}
     <form class="action" method="post" action="/admin/identity-decisions/{{ c.proposal_id }}/reject">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <input type="hidden" name="return_to" value="/admin/reviews/{{ review.id }}/identity">
-      <textarea name="reason" placeholder="다른 사업/회차인 근거 (선택)"></textarea>
-      <button>다른 opportunity로 판정</button>
+      <textarea name="reason" rows="2" placeholder="다른 사업·회차인 근거 (선택)"></textarea>
+      <button class="secondary">이 후보는 다른 장학</button>
     </form>
     {% endif %}{% endif %}
   </div>
-  {% else %}<div class="panel"><p class="muted">후보가 없다.</p></div>{% endfor %}
+  {% else %}<div class="panel"><p class="muted">비교할 후보가 없습니다. 같은 장학을 알고 있으면 검토 대상 장학 화면의 '다른 장학에 병합'을 쓰세요.</p></div>{% endfor %}
 </div>
 {% endblock %}

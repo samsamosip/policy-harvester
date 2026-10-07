@@ -1,0 +1,5 @@
+{# Result of the action that redirected here (?done=<key> or ?problem=<key>, see admin_text.py). #}
+{% set done_message = flash_message('done', request.query_params.get('done'), request.query_params.get('n')) %}
+{% set problem_message = flash_message('problem', request.query_params.get('problem'), request.query_params.get('n')) %}
+{% if done_message %}<div class="notice ok" role="status">{{ done_message }}</div>{% endif %}
+{% if problem_message %}<div class="notice" role="alert">{{ problem_message }}</div>{% endif %}

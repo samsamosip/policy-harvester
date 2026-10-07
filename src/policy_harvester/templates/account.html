@@ -1,9 +1,9 @@
 {% extends "base.html" %}{% block title %}내 계정 · Policy Harvester{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1>내 계정</h1>
-  <p class="lede">{{ admin.display_name }} · {{ admin.email }} · <span class="chip brand">{{ admin.role }}</span></p></div></div>
+  <p class="lede">{{ admin.display_name }} · {{ admin.email }} · {{ chip('role', admin.role) }}</p></div></div>
 {% if admin.password_change_required %}<div class="notice">임시 비밀번호로 로그인했습니다. 새 비밀번호를 정해야 다른 화면을 쓸 수 있습니다.</div>{% endif %}
-{% if changed %}<div class="notice ok">비밀번호를 변경했습니다. 다른 곳에 로그인된 세션은 종료됩니다.</div>{% endif %}
+{% if changed %}<div class="notice ok">비밀번호를 바꿨습니다. 다른 곳에 로그인되어 있던 곳은 로그아웃되었습니다. <a href="/admin">대시보드로 가기</a></div>{% endif %}
 {% if error %}<div class="notice">{{ error }}</div>{% endif %}
 <section class="panel"><h2>비밀번호 변경</h2>
   <form class="fields" method="post" action="/admin/account/password"><input type="hidden" name="csrf" value="{{ csrf }}">
