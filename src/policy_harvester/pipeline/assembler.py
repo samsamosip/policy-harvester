@@ -83,15 +83,18 @@ class OpportunityAssembler:
                      "key": core_name(fact_value(draft.name) or draft.local_key,
                                       fact_value(draft.organization)) or draft.local_key})
                 edit_kind = "initial"
-                if comparisons:
+                # Opportunities another item of this same extraction already took are its
+                # siblings (one notice announcing two scholarships), not candidates for this one.
+                unclaimed = [item for item in comparisons if not item.get("claimed")]
+                if unclaimed:
                     await self._review("identity_uncertain", "opportunity", opportunity_id,
                                        opportunity_id, {
                                            "operation": "same_notice_unmatched",
                                            "notice_version_id": str(notice_version_id),
                                            "extracted_name": fact_value(draft.name),
                                            "existing_opportunity_ids": [
-                                               item["opportunity_id"] for item in comparisons],
-                                           "comparisons": comparisons})
+                                               item["opportunity_id"] for item in unclaimed],
+                                           "comparisons": unclaimed})
             else:
                 edit_kind = "split" if forced_opportunity_id else "in_place_edit"
             claimed.add(opportunity_id)
