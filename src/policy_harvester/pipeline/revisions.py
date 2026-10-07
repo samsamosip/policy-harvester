@@ -68,6 +68,8 @@ class VerifiedRevision:
     extraction_item_path: str = "/revisions/0"
     review_id: uuid.UUID | None = None
     evidence_notes: dict[str, Any] = field(default_factory=dict)
+    # "human" (admin) or "ai_review" (the review model checked same cycle/scope/value on the source)
+    actor_kind: str = "human"
 
 
 def normalize_window_value(value: Any) -> dict[str, Any]:
@@ -160,10 +162,10 @@ class RevisionService:
                evidence, before_state, after_state, rule_version, decision_reason, actor_kind,
                actor_id, observed_at)
             VALUES (:id, 'link_notice', 'confirmed', :opportunity, :notice, :notice_version,
-                    'human_verified', true, true, true, :kind, 'patch', CAST(:evidence AS jsonb),
+                    :basis, true, true, true, :kind, 'patch', CAST(:evidence AS jsonb),
                     jsonb_build_object('opportunity_version_id', CAST(:base AS text)),
                     jsonb_build_object('opportunity_version_id', CAST(:version AS text)),
-                    :rule, :reason, 'human', :actor, :observed)
+                    :rule, :reason, :actor_kind, :actor, :observed)
         """), {"id": decision_id, "opportunity": revision.opportunity_id,
                  "notice": notice["notice_id"], "notice_version": revision.amendment_notice_version_id,
                  "kind": revision.kind, "base": base["id"], "version": version_id,
@@ -171,7 +173,8 @@ class RevisionService:
                                           "quote": revision.intent.quote,
                                           **revision.evidence_notes}], ensure_ascii=False),
                  "rule": RULE_VERSION, "reason": revision.reason, "actor": revision.actor_id,
-                 "observed": notice["observed_at"]})
+                 "actor_kind": revision.actor_kind, "observed": notice["observed_at"],
+                 "basis": "human_verified" if revision.actor_kind == "human" else "verified_cycle_scope"})
         await self._copy_version(base, version_id, decision_id, revision.kind, notice["observed_at"])
         await self.session.execute(text("""
             INSERT INTO inha_policy.opportunity_version_sources
@@ -263,10 +266,12 @@ class RevisionService:
             INSERT INTO inha_policy.audit_logs
               (actor_kind, actor_id, action, entity_type, entity_id, before_state, after_state,
                reason, automated)
-            VALUES ('admin_user', :actor, 'revision_applied', 'opportunity', :opportunity,
+            VALUES (:actor_kind, :actor, 'revision_applied', 'opportunity', :opportunity,
                     jsonb_build_object('opportunity_version_id', CAST(:base AS text)),
-                    CAST(:after AS jsonb), :reason, false)
+                    CAST(:after AS jsonb), :reason, :automated)
         """), {"actor": revision.actor_id, "opportunity": str(revision.opportunity_id),
+                 "actor_kind": "admin_user" if revision.actor_kind == "human" else "worker",
+                 "automated": revision.actor_kind != "human",
                  "base": base["id"], "reason": revision.reason,
                  "after": json.dumps({"opportunity_version_id": str(version_id),
                                       "identity_decision_id": str(decision_id),

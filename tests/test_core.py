@@ -95,7 +95,7 @@ class AiReviewTests(unittest.TestCase):
     def test_only_confident_verdicts_act(self):
         from policy_harvester.pipeline.ai_review import ReviewVerdict
 
-        for verdict in ("dismiss", "fix", "merge"):
+        for verdict in ("dismiss", "fix", "merge", "revise"):
             self.assertTrue(ReviewVerdict(verdict=verdict, confidence="high", reason="r").acted)
             self.assertFalse(ReviewVerdict(verdict=verdict, confidence="medium", reason="r").acted)
         self.assertFalse(ReviewVerdict(verdict="escalate", confidence="high", reason="r").acted)
