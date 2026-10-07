@@ -54,10 +54,13 @@ def detect_type(payload: bytes, filename: str | None = None) -> DetectedType:
                         is_hwp = document.exists("FileHeader") and any(
                             path and path[0] == "BodyText" for path in paths)
                         is_doc = document.exists("WordDocument")
+                        is_xls = document.exists("Workbook") or document.exists("Book")
                     if is_hwp:
                         return DetectedType("hwp", "application/x-hwp", ".hwp", "high")
                     if is_doc:
                         return DetectedType("doc", "application/msword", ".doc", "high")
+                    if is_xls:
+                        return DetectedType("xls", "application/vnd.ms-excel", ".xls", "high")
                 except (OSError, IOError):
                     pass
                 if filename and Path(filename).suffix.lower() == ".hwp":

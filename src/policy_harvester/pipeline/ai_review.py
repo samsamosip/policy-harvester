@@ -54,6 +54,8 @@ class RevisionAction(BaseModel):
     kind: Literal["extension", "correction", "cancellation", "reopened"]
     intent_quote: str = Field(description="정정·연장임을 밝히는 원문 문장")
     patches: list[RevisionPatch]
+    merge_opportunity_ids: list[str] = Field(
+        default_factory=list, description="이 공고에서 따로 만들어진, 대상과 같은 장학(amendment_opportunities의 id)")
 
 
 class ReviewVerdict(BaseModel):
@@ -331,16 +333,17 @@ async def apply(session: AsyncSession, review: dict[str, Any], verdict: ReviewVe
                     raise ActionRefused("one revision per target opportunity")
                 record["revisions"] = [await _revise(session, review, action, verdict.reason, model)
                                        for action in verdict.revisions]
-                if len(verdict.same_opportunity_ids) > 1:
-                    # The amendment's own copies merge into the target they amend.
-                    own, _targets = await _revision_candidates(session, review)
-                    own_ids = {item["opportunity_id"] for item in own}
-                    targets = {item.target_opportunity_id for item in verdict.revisions}
-                    group = [item for item in verdict.same_opportunity_ids if item in targets]
-                    if len(group) != 1:
-                        raise ActionRefused("same_opportunity_ids must hold exactly one revision target")
-                    record["merges"] = await _merge(session, own_ids | set(group), verdict.same_opportunity_ids,
-                                                    verdict.reason, review["payload"], winner_id=group[0])
+                own, _targets = await _revision_candidates(session, review)
+                own_ids = {item["opportunity_id"] for item in own}
+                record["merges"] = []
+                for action in verdict.revisions:  # the amendment's own copies join the target they amend
+                    if action.merge_opportunity_ids:
+                        if not set(action.merge_opportunity_ids) <= own_ids:
+                            raise ActionRefused("merge_opportunity_ids must come from amendment_opportunities")
+                        record["merges"] += await _merge(
+                            session, own_ids | {action.target_opportunity_id},
+                            [action.target_opportunity_id, *action.merge_opportunity_ids], verdict.reason,
+                            review["payload"], winner_id=action.target_opportunity_id)
             if quality:
                 await _clear_quality(session, review)
             elif review["payload"].get("operation") == "cross_notice_candidates":

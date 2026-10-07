@@ -361,7 +361,13 @@ class Worker:
         if notice_version_id:
             blocks, missing, _manifest, _hash = await extraction_input(session, notice_version_id)
             context["source"] = ai_review.source_text(blocks)
-            context["unread_document_ids"] = [str(item) for item in missing]
+            context["unread_documents"] = [dict(row) for row in (await session.execute(text("""
+                SELECT d.id::text, coalesce(nva.original_filename, '') AS filename, d.status,
+                       array_to_string(d.quality_flags, ', ') AS flags
+                FROM inha_policy.documents d
+                LEFT JOIN inha_policy.notice_version_assets nva ON nva.id=d.asset_occurrence_id
+                WHERE d.id = ANY(:ids)
+            """), {"ids": list(missing)})).mappings()]
         # Nothing is pending; do not hold a transaction open while the model thinks.
         await session.commit()
         result = await target.provider.structured(

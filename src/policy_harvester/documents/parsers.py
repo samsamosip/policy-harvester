@@ -9,7 +9,7 @@ import zipfile
 import zlib
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Protocol
+from typing import Any, Protocol
 
 import olefile
 import pymupdf as fitz
@@ -357,14 +357,18 @@ class HwpParser:
             source = Path(directory) / "document.hwp"
             target = Path(directory) / "document.html"
             source.write_bytes(payload)
-            html_run = subprocess.run(["hwp5html", "--html", "--output", str(target), str(source)],
-                                      capture_output=True, check=False, timeout=120)
-            html_bytes = target.read_bytes() if html_run.returncode == 0 and target.exists() else None
+            flags: list[str] = []
+            try:  # large documents can take minutes; plain text below still covers them
+                html_run = subprocess.run(["hwp5html", "--html", "--output", str(target), str(source)],
+                                          capture_output=True, check=False, timeout=300)
+                html_bytes = target.read_bytes() if html_run.returncode == 0 and target.exists() else None
+            except subprocess.TimeoutExpired:
+                html_bytes = None
+                flags.append("hwp5html_timeout")
             text_run = subprocess.run(["hwp5txt", str(source)], capture_output=True,
-                                      check=False, timeout=60)
+                                      check=False, timeout=180)
         plain = text_run.stdout.decode("utf-8", "replace") if text_run.returncode == 0 else ""
         blocks: list[Block] = []
-        flags: list[str] = []
         if html_bytes is not None:
             converted = HtmlParser().parse(html_bytes)
             blocks.extend(Block("", block.kind, block.text, source_path=f"hwp5html{block.source_path}",
@@ -471,6 +475,41 @@ class XlsxParser:
         return ParseResult(self.name, self.version, "succeeded", tuple(blocks), joined)
 
 
+class XlsParser:
+    """Legacy Excel 97-2003 (often blank application forms) via xlrd, one table per sheet."""
+    formats = frozenset({"xls"})
+    name, version = "xlrd", "1.0"
+
+    def parse(self, payload: bytes, filename: str | None = None) -> ParseResult:
+        import xlrd
+
+        workbook = xlrd.open_workbook(file_contents=payload)
+        blocks = []
+        for sheet in workbook.sheets():
+            rows = [[_xls_cell(sheet.cell(row, column), workbook.datemode) for column in range(sheet.ncols)]
+                    for row in range(sheet.nrows)]
+            rows = [row for row in rows if any(value for value in row)]
+            if rows:
+                blocks.append(Block(_key("xls", len(blocks)), "table",
+                                    "\n".join("\t".join(row) for row in rows),
+                                    source_path=f"sheet/{sheet.name}", table_data={"rows": rows}))
+        joined = "\n\n".join(block.text for block in blocks)
+        return ParseResult(self.name, self.version, "succeeded", tuple(blocks), joined)
+
+
+def _xls_cell(cell: Any, datemode: int) -> str:
+    import xlrd
+
+    if cell.ctype == xlrd.XL_CELL_DATE:
+        try:
+            return xlrd.xldate_as_datetime(cell.value, datemode).isoformat(sep=" ").removesuffix(" 00:00:00")
+        except (ValueError, OverflowError):
+            return str(cell.value)
+    if cell.ctype == xlrd.XL_CELL_NUMBER and float(cell.value).is_integer():
+        return str(int(cell.value))
+    return "" if cell.value is None else str(cell.value).strip()
+
+
 class PptxParser:
     formats = frozenset({"pptx"})
     name, version = "python-pptx", "1.0"
@@ -493,7 +532,7 @@ class ParserRegistry:
     def __init__(self):
         parsers: tuple[DocumentParser, ...] = (
             HtmlParser(), PdfParser(), ImageParser(), DocxParser(), DocParser(), HwpxParser(), HwpParser(),
-            XlsxParser(), PptxParser(),
+            XlsxParser(), XlsParser(), PptxParser(),
         )
         self._parsers = {format_name: parser for parser in parsers for format_name in parser.formats}
         self.pdf = PdfHybridParser()
