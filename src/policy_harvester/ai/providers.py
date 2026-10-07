@@ -21,6 +21,32 @@ class CapabilityError(RuntimeError):
     pass
 
 
+class TransientProviderError(RuntimeError):
+    """The provider is temporarily unavailable; the job should wait and try again."""
+
+
+TRANSIENT_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
+
+
+def is_transient(exc: BaseException) -> bool:
+    """Rate limits, overload, 5xx, timeouts and dropped connections: worth retrying later.
+
+    Validation failures and 4xx request errors are not; retrying the same request cannot help.
+    """
+    if isinstance(exc, TransientProviderError):
+        return True
+    status = getattr(exc, "status_code", None) or getattr(getattr(exc, "response", None), "status_code", None)
+    if isinstance(status, int):
+        return status in TRANSIENT_STATUS
+    name = exc.__class__.__name__
+    if name in {"APIConnectionError", "APITimeoutError", "RateLimitError", "InternalServerError",
+                "ServiceUnavailableError", "OverloadedError"}:
+        return True
+    import httpx
+
+    return isinstance(exc, (httpx.TimeoutException, httpx.NetworkError, httpx.RemoteProtocolError))
+
+
 # Every request/response pair of the current task, when a caller wants them persisted.
 EXCHANGE_LOG: ContextVar[list[dict[str, Any]] | None] = ContextVar("llm_exchange_log", default=None)
 

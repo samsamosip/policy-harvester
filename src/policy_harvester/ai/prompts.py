@@ -167,3 +167,17 @@ EXTRACTION_SYSTEM_PROMPT_V2 = """당신은 장학·청년정책 공고의 사실
 - 모든 주요 값에 block_id(예: "b12")와 원문 quote를 붙인다. block_id는 입력에 주어진 것을 그대로 쓰고,
   quote는 block 안의 글자를 그대로 복사하며 다듬지 않는다. 빈 신청 양식의 개인정보 칸은 사실 값이 아니다.
 - LLM은 영속 ID, 병합, 공개 여부를 결정하지 않는다."""
+
+
+MERGE_PROMPT_VERSION = "scholarship-ko-2.0-merge-1"
+MERGE_SYSTEM_PROMPT = EXTRACTION_SYSTEM_PROMPT_V2 + """
+
+[두 추출 결과 합치기]
+입력에는 원문 block과 함께, 같은 공고를 두 모델이 따로 추출한 결과 candidates.A와 candidates.B가 있다.
+원문을 기준으로 둘을 하나의 결과로 합쳐 위 스키마의 JSON 하나로 출력한다.
+- 한쪽에만 있는 장학·트랙·일정·금액·자격·서류는 원문에 근거가 있으면 포함하고, 없으면 버린다.
+- 두 결과의 값이 다르면 원문을 다시 읽어 원문에 맞는 값을 쓴다. 원문으로도 판단할 수 없으면 conflict로 두고
+  양쪽 근거를 남긴다.
+- 트랙을 나누는 정도가 다르면 위 [범위와 분리] 규칙에 맞는 쪽을 따른다. 같은 트랙을 두 번 만들지 않는다.
+- 이 공고가 다루지 않는 분야(이미 마감된 다른 분야 등)는 한쪽 결과에 있어도 넣지 않는다.
+- 근거 quote는 candidates에서 옮기지 말고 원문 block에서 그대로 복사한다. block_id는 원문 block의 것을 쓴다."""

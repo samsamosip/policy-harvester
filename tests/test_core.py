@@ -540,6 +540,53 @@ class PdfRouteTests(unittest.TestCase):
             render_pdf(b"not an hwp file", "hwp")
 
 
+class CrosscheckMergeAndRetryTests(unittest.TestCase):
+    def test_differences_and_transient_retry(self):
+        from datetime import timedelta
+
+        import httpx
+        from openai import APIStatusError, BadRequestError
+        from policy_harvester.ai.providers import TransientProviderError, is_transient
+        from policy_harvester.ai.schema_v2 import ExtractionBundleV2
+        from policy_harvester.worker import extraction_differences, retry_delay
+
+        def bundle(deadline: str, amount: int, items: int = 1):
+            ev = [{"block_id": "b1", "quote": "x", "evidence_type": "explicit"}]
+            nf = {"value": None, "state": "not_found", "evidence": []}
+            item = {"local_key": "o", "name": {"value": "장학", "state": "stated", "evidence": ev}, "aliases": [],
+                    "organization": nf, "category": "scholarship", "academic_year": nf, "semester": nf,
+                    "round_label": nf, "summary": "", "application_windows": [{
+                        "local_key": "w", "stage": "application", "label": None, "submit_to": "university",
+                        "start": nf, "end": {"value": {"date": deadline, "time": None}, "state": "stated", "evidence": ev},
+                        "closing_rule": "fixed"}],
+                    "benefits": [{"benefit_type": "cash", "amount_min": nf, "frequency": "once", "duration": None,
+                                  "amount_max": {"value": amount, "state": "stated", "evidence": ev},
+                                  "tuition_percentage": nf, "description": ""}],
+                    "eligibility": {**{k: nf for k in ("student_types", "grades", "majors", "gpa_min", "gpa_scale",
+                                                       "income_bracket_max", "regions", "schools", "enrollment_states")},
+                                    "rule_tree": None, "residual_conditions": []},
+                    "selection": {"selection_count": nf, "nomination_quota": nf, "count_text": None, "method": nf},
+                    "application_methods": [], "required_documents": [], "contacts": []}
+            return ExtractionBundleV2.model_validate({"schema_version": "scholarship_v2", "revisions": [],
+                                                      "coverage": "complete", "warnings": [],
+                                                      "opportunities": [{**item, "local_key": f"o{i}"} for i in range(items)]})
+        self.assertEqual(extraction_differences(bundle("2026-04-30", 2000000), bundle("2026-04-30", 2000000)), [])
+        self.assertEqual(extraction_differences(bundle("2026-04-30", 2000000), bundle("2026-05-07", 2000000)),
+                         ["deadlines"])
+        self.assertEqual(extraction_differences(bundle("2026-04-30", 2000000, 2), bundle("2026-04-30", 1500000)),
+                         ["opportunities", "amounts"])
+        request = httpx.Request("POST", "https://example.test")
+        overloaded = APIStatusError("overloaded", response=httpx.Response(503, request=request), body=None)
+        bad = BadRequestError("bad", response=httpx.Response(400, request=request), body=None)
+        self.assertTrue(is_transient(overloaded))
+        self.assertTrue(is_transient(httpx.ReadTimeout("slow")))
+        self.assertTrue(is_transient(TransientProviderError("x")))
+        self.assertFalse(is_transient(bad))
+        self.assertFalse(is_transient(ValueError("schema")))
+        self.assertEqual([retry_delay(overloaded, n) for n in (1, 2)], [timedelta(minutes=10), timedelta(minutes=30)])
+        self.assertEqual(retry_delay(ValueError("x"), 1), timedelta(minutes=2))
+
+
 class LlmExchangeLogTests(unittest.TestCase):
     def test_calls_are_recorded_with_raw_request_and_error(self):
         import asyncio

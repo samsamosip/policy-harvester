@@ -19,9 +19,10 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .ai.prompts import (EXTRACTION_PROMPT_VERSION_V2, EXTRACTION_SCHEMA_VERSION_V2,
-                         EXTRACTION_SYSTEM_PROMPT_V2)
-from .ai.providers import (EXCHANGE_LOG, ExtractionTarget, GenerationResult, ProviderRegistry, Usage,
-                           start_exchange_log, validate_lenient_json)
+                         EXTRACTION_SYSTEM_PROMPT_V2, MERGE_PROMPT_VERSION, MERGE_SYSTEM_PROMPT)
+from .ai.providers import (EXCHANGE_LOG, ExtractionTarget, GenerationResult, ProviderRegistry,
+                           TransientProviderError, Usage, is_transient, start_exchange_log,
+                           validate_lenient_json)
 from .ai.schema import validate_evidence
 from .ai.schema_v2 import ExtractionBundleV2, restore_block_ids, short_block_ids, with_title_revision
 from .config import effective_configuration, get_settings, resolved_settings
@@ -56,6 +57,36 @@ class ExtractionOutcome:
     validation_errors: list[str]
     model: str
     reused: bool = False  # taken from a sealed run of the same input, no model call
+
+
+def extraction_differences(first: ExtractionBundleV2, second: ExtractionBundleV2) -> list[str]:
+    """What two results of the same notice disagree on, among the values that matter most."""
+    def stated(fact: Any) -> Any:
+        return fact.value if fact.state in {"stated", "resolved_update"} else None
+
+    def signature(bundle: ExtractionBundleV2) -> dict[str, Any]:
+        items = bundle.opportunities
+        return {
+            "opportunities": len(items),
+            "deadlines": sorted({str(stated(window.end).date) for item in items for window in item.application_windows
+                                 if window.stage in {"application", "additional_application"}
+                                 and stated(window.end) and stated(window.end).date}),
+            "amounts": sorted({value for item in items for benefit in item.benefits
+                               for value in (stated(benefit.amount_min), stated(benefit.amount_max))
+                               if value is not None}),
+            "headcounts": sorted({stated(item.selection.selection_count) for item in items
+                                  if stated(item.selection.selection_count) is not None}),
+        }
+    left, right = signature(first), signature(second)
+    return [key for key in left if left[key] != right[key]]
+
+
+def retry_delay(exc: BaseException, attempt: int) -> timedelta:
+    """Provider outages (overload, rate limits) last minutes, so they wait 10, 30, 90 minutes;
+    other failures retry after 2, 4, 8 minutes."""
+    if is_transient(exc):
+        return timedelta(minutes=10 * 3 ** max(0, attempt - 1))
+    return timedelta(minutes=2 ** attempt)
 
 
 def needs_crosscheck(blocks: dict[str, str], bundle: ExtractionBundleV2) -> bool:
@@ -262,7 +293,7 @@ class Worker:
               finished_at=CASE WHEN :retry THEN NULL ELSE now() END,
               error_code=:code, error_message=:message WHERE id=:id
         """), {"status": "retry" if retry else "failed",
-                 "available": datetime.now(UTC) + timedelta(minutes=2 ** job["attempt_count"]),
+                 "available": datetime.now(UTC) + retry_delay(exc, job["attempt_count"]),
                  "retry": retry, "code": exc.__class__.__name__, "message": str(exc)[:4000],
                  "id": job["id"]})
         if not retry:
@@ -500,9 +531,14 @@ class Worker:
         # Re-assembling (split, forced match) works on the sealed extraction and never calls a model.
         reassembly = bool(job["payload"].get("forced_opportunity_id")
                           or job["payload"].get("target_item_index") is not None)
+        # A temporarily unavailable provider (overload, rate limit, 5xx) is waited out: the job is
+        # retried later, and only its last attempt falls back to the cross-check model.
+        retry_later = not reassembly and job["attempt_count"] < job["max_attempts"]
         try:
             outcome = await self._extract(session, primary, *context, cache_only=reassembly)
         except Exception as exc:
+            if retry_later and is_transient(exc):
+                raise TransientProviderError(f"{primary.model} unavailable: {exc}"[:2000]) from exc
             if crosscheck is None:
                 raise
             logger.warning("primary extraction %s (%s); falling back to %s",
@@ -514,7 +550,7 @@ class Worker:
                 # Re-assembling a sealed result (split, retry) must reach the same decision without
                 # calling a model, so the cross-check then comes from its sealed run or not at all.
                 outcome = await self._crosscheck(session, outcome, crosscheck, context,
-                                                 cache_only=outcome.reused)
+                                                 cache_only=outcome.reused, retry_later=retry_later)
         title = (await session.execute(text(
             "SELECT title FROM inha_policy.notice_versions WHERE id=:id"
         ), {"id": job["notice_version_id"]})).scalar_one()
@@ -536,41 +572,68 @@ class Worker:
             await IdentityCandidateService(session).propose_for_versions(version_ids)
 
     async def _crosscheck(self, session: AsyncSession, first: "ExtractionOutcome",
-                          target: ExtractionTarget, context: tuple,
-                          cache_only: bool = False) -> "ExtractionOutcome":
-        """Run the second model and keep the result with more opportunities.
+                          target: ExtractionTarget, context: tuple, cache_only: bool = False,
+                          retry_later: bool = False) -> "ExtractionOutcome":
+        """Extract again with the second model; if the two results differ, merge them.
 
-        Models mostly fail on multi-track notices by dropping tracks, so the larger result is kept,
-        and any disagreement in the number of tracks sends every resulting version to review.
+        Agreeing results keep the first. Differing ones (track count, application deadlines,
+        amounts, headcounts) are merged by the second model against the source, and the merged
+        result goes on as normal. If merging fails, the result with more opportunities is kept and
+        the disagreement sends its versions to review.
         """
         try:
             second = await self._extract(session, target, *context, cache_only=cache_only)
         except LookupError:
             return first
         except Exception as exc:
+            if retry_later and is_transient(exc):
+                raise TransientProviderError(f"{target.model} unavailable: {exc}"[:2000]) from exc
             logger.warning("cross-check with %s failed: %s", target.model, exc.__class__.__name__)
             return first
+        differences = extraction_differences(first.bundle, second.bundle)
+        if not differences:
+            return first
+        job, blocks, missing, manifest, input_hash = context
+        try:
+            return await self._extract(
+                session, target, job, blocks, missing, manifest, input_hash, cache_only=cache_only,
+                system=MERGE_SYSTEM_PROMPT, prompt_version=MERGE_PROMPT_VERSION,
+                candidates={"A": first.bundle.model_dump(mode="json"),
+                            "B": second.bundle.model_dump(mode="json")},
+                merged_from=[first.run_id, second.run_id], differences=differences)
+        except Exception as exc:
+            if retry_later and is_transient(exc):
+                raise TransientProviderError(f"{target.model} unavailable: {exc}"[:2000]) from exc
+            if not isinstance(exc, LookupError):
+                logger.warning("merging the cross-checked results failed: %s", exc.__class__.__name__)
         counts = (len(first.bundle.opportunities), len(second.bundle.opportunities))
         chosen = second if counts[1] > counts[0] else first
-        if counts[0] == counts[1]:
-            return chosen
-        note = (f"crosscheck_disagreement: {first.model} found {counts[0]} item(s), "
-                f"{second.model} found {counts[1]}; kept {chosen.model}")
+        note = (f"crosscheck_disagreement ({', '.join(differences)}): {first.model} found {counts[0]} "
+                f"item(s), {second.model} found {counts[1]}; kept {chosen.model}")
         bundle = chosen.bundle.model_copy(update={"warnings": [*chosen.bundle.warnings, note]})
         return ExtractionOutcome(chosen.run_id, bundle, chosen.validation_errors, chosen.model, chosen.reused)
 
     async def _extract(self, session: AsyncSession, target: ExtractionTarget, job: dict[str, Any],
                        blocks: dict[str, str], missing: list[uuid.UUID], manifest: dict[str, Any],
-                       input_hash: str, cache_only: bool = False) -> "ExtractionOutcome":
+                       input_hash: str, cache_only: bool = False, *,
+                       system: str = EXTRACTION_SYSTEM_PROMPT_V2,
+                       prompt_version: str = EXTRACTION_PROMPT_VERSION_V2,
+                       candidates: dict[str, Any] | None = None,
+                       merged_from: list[uuid.UUID] | None = None,
+                       differences: list[str] | None = None) -> "ExtractionOutcome":
         """One model's extraction run: reuse a sealed run of the same input, else call the model.
 
         The prompt names blocks "b1", "b2", ... in manifest order; stored outputs use block ids.
+        A merge run also gets the two candidate results and is keyed by the runs it merges.
         """
         forward, backward = short_block_ids(blocks)
         short_blocks = {forward[key]: value for key, value in blocks.items()}
-        prompt_hash = hashlib.sha256(EXTRACTION_SYSTEM_PROMPT_V2.encode()).hexdigest()
+        prompt_hash = hashlib.sha256(system.encode()).hexdigest()
+        if merged_from:
+            input_hash = hashlib.sha256(
+                (input_hash + "".join(str(run) for run in merged_from)).encode()).hexdigest()
         keys = {"version": job["notice_version_id"], "schema": EXTRACTION_SCHEMA_VERSION_V2,
-                "prompt": EXTRACTION_PROMPT_VERSION_V2, "prompt_sha": prompt_hash,
+                "prompt": prompt_version, "prompt_sha": prompt_hash,
                 "provider": target.provider_name, "model": target.model, "input_sha": input_hash}
         cached = (await session.execute(text("""
             SELECT id, status, parsed_output, validation_errors
@@ -600,15 +663,20 @@ class Worker:
                     'policy-harvester-0.2.0', CAST(:parameters AS jsonb),
                     CAST(:manifest AS jsonb), :input_sha, 'running', now())
         """), {**keys, "id": extraction_id, "parameters": json.dumps(target.parameters),
-                 "manifest": json.dumps({**manifest, "block_aliases": "b<n> = n-th block in manifest order"})})
+                 "manifest": json.dumps({**manifest, "block_aliases": "b<n> = n-th block in manifest order",
+                                         **({"merged_from": [str(run) for run in merged_from],
+                                             "differences": differences} if merged_from else {})})})
         await session.commit()
         try:
             result = await self._revalidate_failed_output(session, keys, backward)
             if result is None:
+                payload: dict[str, Any] = {
+                    "blocks": [{"block_id": key, "text": value} for key, value in short_blocks.items()],
+                    "missing_document_ids": [str(item) for item in missing]}
+                if candidates:
+                    payload["candidates"] = restore_block_ids(candidates, forward)  # block ids -> b<n>
                 result = await target.provider.structured(
-                    model=target.model, system=EXTRACTION_SYSTEM_PROMPT_V2,
-                    payload={"blocks": [{"block_id": key, "text": value} for key, value in short_blocks.items()],
-                             "missing_document_ids": [str(item) for item in missing]},
+                    model=target.model, system=system, payload=payload,
                     schema=ExtractionBundleV2, parameters=dict(target.parameters))
         except Exception as exc:
             # Keep whatever the provider returned, even when it never validated.
@@ -793,9 +861,35 @@ async def _worker_loop(worker: Worker, forever: bool, drain: bool, max_jobs: int
     logger.info("worker stopped after %s jobs", processed)
 
 
+async def abandon_interrupted_runs(session: AsyncSession, *, older_than: timedelta | None = None) -> int:
+    """Mark crawl runs left "running" by a dead process as failed, so the source can crawl again.
+
+    Crawls run inside the scheduler process, so when the scheduler starts every "running" run
+    belongs to a process that is gone (a restart, a redeploy). Without this, the one-active-run
+    rule blocks the source forever. While running, runs older than ``older_than`` are swept too.
+    """
+    condition = "started_at < now() - CAST(:age AS interval)" if older_than else "true"
+    rows = (await session.execute(text(f"""
+        UPDATE inha_policy.crawl_runs SET status='failed', finished_at=now(),
+          error_summary=coalesce(error_summary || ' / ', '') || :reason
+        WHERE status='running' AND {condition} RETURNING id
+    """), {"reason": "interrupted: the crawling process stopped before the run finished",
+             "age": f"{int(older_than.total_seconds())} seconds" if older_than else None})).all()
+    if rows:
+        logger.warning("marked %d interrupted crawl run(s) as failed", len(rows))
+    await session.commit()
+    return len(rows)
+
+
+STALE_CRAWL_RUN = timedelta(hours=6)
+
+
 async def run_scheduler(forever: bool) -> None:
+    async with SessionFactory() as session:
+        await abandon_interrupted_runs(session)
     while True:
         async with SessionFactory() as session:
+            await abandon_interrupted_runs(session, older_than=STALE_CRAWL_RUN)
             queued = (await session.execute(text("""
                 SELECT r.id, r.mode, s.source_key FROM inha_policy.crawl_runs r
                 JOIN inha_policy.sources s ON s.id=r.source_id
