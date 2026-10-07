@@ -90,6 +90,13 @@
     button.secondary, .btn.secondary { background: #fff; color: var(--ink); border-color: #c9d1db }
     button.danger { background: var(--bad); border-color: var(--bad) }
     main form.inline { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap }
+    td.row-action { width: 1%; white-space: nowrap; text-align: right }
+    details.confirm-delete { display: inline-flex; align-items: center; gap: 6px; flex-direction: row-reverse }
+    details.confirm-delete > summary { list-style: none; cursor: pointer; width: 28px; height: 28px; display: inline-grid;
+      place-items: center; border-radius: 6px; color: var(--muted); font-size: 18px; line-height: 1 }
+    details.confirm-delete > summary::-webkit-details-marker { display: none }
+    details.confirm-delete > summary:hover, details.confirm-delete[open] > summary { background: #fdecec; color: var(--bad) }
+    details.confirm-delete button.danger { padding: 4px 10px; font-size: 13px }
     details > summary { cursor: pointer; color: var(--brand) }
     .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px }
     .tabs a { padding: 5px 12px; border-radius: 16px; border: 1px solid var(--line); background: #fff; color: var(--ink-2); font-size: 13px }

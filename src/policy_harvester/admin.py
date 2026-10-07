@@ -231,7 +231,7 @@ TABLE_QUERIES = {
     "opportunities": ("장학 version(원시 테이블)", "SELECT ov.id, ov.opportunity_id, ov.version_no, ov.title, ov.publication_state, ov.data_quality_status, ov.edit_kind, o.lifecycle_status, o.merged_into_id, ov.created_at FROM inha_policy.opportunity_versions ov JOIN inha_policy.opportunities o ON o.id=ov.opportunity_id ORDER BY ov.created_at DESC LIMIT 300"),
     "ai-runs": ("AI 추출 실행", "SELECT id, notice_version_id, provider_name, model_id, prompt_version, schema_version, processing_code_version, status, input_tokens, output_tokens, estimated_cost, finished_at FROM inha_policy.extraction_runs ORDER BY created_at DESC LIMIT 300"),
     "audit": ("감사 로그", "SELECT actor_kind, actor_id, action, entity_type, entity_id, reason, created_at FROM inha_policy.audit_logs ORDER BY created_at DESC LIMIT 300"),
-    "users": ("사용자", "SELECT id, email, display_name, role, is_active, last_login_at, created_at FROM inha_policy.admin_users ORDER BY email"),
+    "users": ("사용자", "SELECT id, email, display_name, role, is_active, last_login_at, created_at FROM inha_policy.admin_users WHERE deleted_at IS NULL ORDER BY email"),
     "embedding-profiles": ("임베딩 프로필", "SELECT id, profile_key, model_id, dimensions, distance_metric, chunker_version, is_active, created_at FROM inha_policy.embedding_profiles ORDER BY created_at DESC"),
     "manual-overrides": ("수동 수정 이력", "SELECT id, opportunity_id, field_path, scope_key, action, value_json, reason, actor_id, created_at FROM inha_policy.manual_overrides ORDER BY created_at DESC LIMIT 300"),
 }
@@ -1783,11 +1783,11 @@ async def search_debug(request: Request, session: Session, admin: Viewer,
 async def users_page(request: Request, session: Session, admin: Admin) -> HTMLResponse:
     rows = (await session.execute(text("""
         SELECT id, email, display_name, role, is_active, last_login_at, created_at
-        FROM inha_policy.admin_users ORDER BY email
+        FROM inha_policy.admin_users WHERE deleted_at IS NULL ORDER BY email
     """))).mappings().all()
     return templates.TemplateResponse(request, "users.html", _context(
         request, admin, rows=rows, created=request.query_params.get("created"),
-        error=request.query_params.get("error")))
+        deleted=request.query_params.get("deleted"), error=request.query_params.get("error")))
 
 
 @router.post("/users")
@@ -1820,25 +1820,41 @@ async def create_user(request: Request, session: Session, admin: Admin) -> Redir
     return RedirectResponse(f"/admin/users?{urlencode({'created': email})}", status_code=303)
 
 
-@router.post("/users/{user_id}/toggle")
-async def toggle_user(user_id: uuid.UUID, request: Request, session: Session,
-                      admin: Admin) -> RedirectResponse:
+@router.post("/users/{user_id}/delete")
+async def delete_user(user_id: uuid.UUID, request: Request, session: Session, admin: Admin) -> RedirectResponse:
+    """Remove an account from the admin: it can no longer sign in and its email can be reused.
+
+    The row stays (audit logs, API keys and overrides refer to it), with the original email in
+    deleted_email. You cannot delete yourself or the last remaining admin.
+    """
     await _form(request, admin)
     if user_id == admin["id"]:
-        raise HTTPException(422, "you cannot disable your own account")
-    before = (await session.execute(text(
-        "SELECT is_active FROM inha_policy.admin_users WHERE id=:id FOR UPDATE"
-    ), {"id": user_id})).scalar_one_or_none()
-    if before is None:
+        return RedirectResponse(f"/admin/users?{urlencode({'error': '자기 계정은 삭제할 수 없습니다'})}",
+                                status_code=303)
+    target = (await session.execute(text("""
+        SELECT email, role FROM inha_policy.admin_users WHERE id=:id AND deleted_at IS NULL FOR UPDATE
+    """), {"id": user_id})).mappings().one_or_none()
+    if target is None:
         raise HTTPException(404)
-    await session.execute(text(
-        "UPDATE inha_policy.admin_users SET is_active=NOT is_active, updated_at=now() WHERE id=:id"
-    ), {"id": user_id})
-    await _audit(session, admin, "admin_user_toggled", "admin_user", str(user_id),
-                 before={"is_active": before}, after={"is_active": not before},
+    if target["role"] == "admin":
+        others = (await session.execute(text("""
+            SELECT count(*) FROM inha_policy.admin_users
+            WHERE role='admin' AND is_active AND deleted_at IS NULL AND id<>:id
+        """), {"id": user_id})).scalar_one()
+        if not others:
+            return RedirectResponse(f"/admin/users?{urlencode({'error': '마지막 admin 계정은 삭제할 수 없습니다'})}",
+                                    status_code=303)
+    await session.execute(text("""
+        UPDATE inha_policy.admin_users
+        SET is_active=false, deleted_at=now(), deleted_email=email,
+            email='deleted+' || id::text || '@deleted.invalid', updated_at=now()
+        WHERE id=:id
+    """), {"id": user_id})
+    await _audit(session, admin, "admin_user_deleted", "admin_user", str(user_id),
+                 before={"email": target["email"], "role": target["role"]}, after={"deleted": True},
                  reason="user administration")
     await session.commit()
-    return RedirectResponse("/admin/users", status_code=303)
+    return RedirectResponse(f"/admin/users?{urlencode({'deleted': target['email']})}", status_code=303)
 
 
 async def _api_key_rows(session: AsyncSession) -> list[dict[str, Any]]:
