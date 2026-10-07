@@ -10,6 +10,7 @@ from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from ..ai.schema_v2 import ExtractionBundleV2, Fact, Opportunity
+from .ai_review import remember_created
 from .edition import compare, core_name, draft_signature, version_signature
 
 
@@ -476,13 +477,15 @@ class OpportunityAssembler:
 
     async def _review(self, kind: str, entity_type: str, entity_id: uuid.UUID,
                       opportunity_id: uuid.UUID | None, payload: dict[str, Any]) -> None:
-        await self.session.execute(text("""
+        review_id = (await self.session.execute(text("""
             INSERT INTO inha_policy.review_items
               (review_kind, entity_type, entity_id, opportunity_id, payload)
             VALUES (:kind, :entity_type, :entity_id, :opportunity_id, CAST(:payload AS jsonb))
+            RETURNING id
         """), {"kind": kind, "entity_type": entity_type, "entity_id": entity_id,
                  "opportunity_id": opportunity_id,
-                 "payload": json.dumps(payload, ensure_ascii=False, default=str)})
+                 "payload": json.dumps(payload, ensure_ascii=False, default=str)})).scalar_one()
+        remember_created(self.session, review_id)
 
     @staticmethod
     def _contains_conflict(value: Any) -> bool:

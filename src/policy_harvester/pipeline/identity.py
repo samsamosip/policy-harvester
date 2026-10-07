@@ -12,6 +12,7 @@ import uuid
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
+from .ai_review import remember_created
 from .edition import compare, version_signature
 
 MAX_CANDIDATES = 3
@@ -88,11 +89,13 @@ class IdentityCandidateService:
                               "score": round(result.name_score, 4), "verdict": result.verdict,
                               "reasons": list(result.reasons)})
         if decisions:
-            await self.session.execute(text("""
+            review_id = (await self.session.execute(text("""
                 INSERT INTO inha_policy.review_items
                   (review_kind, entity_type, entity_id, opportunity_id, payload)
                 VALUES ('identity_uncertain', 'opportunity', :id, :id, CAST(:payload AS jsonb))
+                RETURNING id
             """), {"id": version["opportunity_id"], "payload": json.dumps({
                 "operation": "cross_notice_candidates", "opportunity_version_id": str(version_id),
-                "title": version["title"], "candidates": decisions}, ensure_ascii=False)})
+                "title": version["title"], "candidates": decisions}, ensure_ascii=False)})).scalar_one()
+            remember_created(self.session, review_id)
         return [uuid.UUID(item["decision_id"]) for item in decisions]

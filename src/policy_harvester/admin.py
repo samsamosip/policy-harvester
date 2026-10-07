@@ -871,9 +871,12 @@ async def reviews(request: Request, session: Session, admin: Viewer) -> HTMLResp
         WHERE r.status IN ('open','in_review') AND (:kind = '' OR r.review_kind = :kind)
         ORDER BY r.priority DESC, r.created_at LIMIT 300
     """), {"kind": kind})).mappings().all()
+    ai_pending = (await session.execute(text(
+        "SELECT count(*) FROM inha_policy.review_items WHERE status='ai_pending'"
+    ))).scalar_one()
     from .admin_pages import REVIEW_LABELS
     return templates.TemplateResponse(request, "reviews.html", _context(
-        request, admin, rows=rows, counts=counts, kind=kind, labels=REVIEW_LABELS))
+        request, admin, rows=rows, counts=counts, kind=kind, labels=REVIEW_LABELS, ai_pending=ai_pending))
 
 
 @router.post("/reviews/{review_id}/resolve")
@@ -1490,6 +1493,8 @@ async def split_source(opportunity_id: uuid.UUID, request: Request, session: Ses
 SETTING_GROUPS = (
     ("llm", "이미지 전사 · 교차 확인", "공고 이미지와 스캔 페이지를 옮겨 적고, 추출 결과를 한 번 더 확인하는 모델입니다."),
     ("extraction", "추출", "공고를 구조화하는 모델입니다. 비워 둔 항목은 위 LLM 설정을 씁니다."),
+    ("review", "AI 2차 검토", "품질·동일성·정정 후보처럼 판단이 필요한 검토를 사람에게 보내기 전에 이 모델이 원문과 대조해 한 번 더 봅니다. "
+     "문제가 없다고 확신하면 닫고(품질이면 공개), 아니면 판단 근거를 붙여 검토함에 올립니다. 위 LLM endpoint에서 실행되며, 모델을 비우면 꺼집니다."),
     ("embedding", "임베딩", "검색 색인을 만드는 모델입니다."),
     ("publishing", "공개", ""),
 )
@@ -1509,6 +1514,8 @@ SETTING_INPUTS: dict[str, dict[str, Any]] = {
     "llm.max_output_tokens": {"label": "출력 한도(토큰)", "kind": "number", "min": 1024, "max": 1000000,
                               "step": 1, "group": "extraction"},
     "extraction.crosscheck_model": {"label": "교차 확인 모델 (위 LLM endpoint에서 실행)", "kind": "text"},
+    "review.model": {"label": "검토 모델", "kind": "text"},
+    "review.reasoning_effort": {"label": "thinking 강도", "kind": "choice", "choices": ["low", "medium", "high"]},
     "embedding.provider": {"label": "provider (외부 API 또는 내장 ONNX)", "kind": "choice",
                            "choices": ["onnx", "openai_compatible", "openai", "azure_openai", "cohere", "voyage",
                                        "google"],

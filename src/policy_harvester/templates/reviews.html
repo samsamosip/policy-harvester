@@ -3,10 +3,11 @@
   .review { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px }
   .review + .review { margin-top: 12px }
   .review .what { font-size: 13px; color: var(--ink-2); margin: 6px 0 0 }
+  .review .ai-note { font-size: 13px; margin: 8px 0 0; padding: 8px 10px; background: var(--line-2); border-radius: 6px }
   @media (max-width: 1000px) { .review { grid-template-columns: 1fr } }
 </style>{% endblock %}
 {% block content %}
-<div class="page-head"><div><h1>검토함</h1><p class="lede">자동으로 확정하지 않고 사람의 판단을 기다리는 항목입니다. 종류별로 해야 할 일이 다릅니다.</p></div></div>
+<div class="page-head"><div><h1>검토함</h1><p class="lede">자동으로 확정하지 않고 사람의 판단을 기다리는 항목입니다. 종류별로 해야 할 일이 다릅니다.{% if ai_pending %} AI 2차 검토 중인 항목 {{ ai_pending }}건은 판단이 끝나면 필요한 것만 여기에 올라옵니다.{% endif %}</p></div></div>
 <div class="tabs">
   <a class="{% if not kind %}on{% endif %}" href="/admin/reviews">전체 {{ counts|sum(attribute='count') }}</a>
   {% for row in counts %}<a class="{% if kind == row.review_kind %}on{% endif %}" href="?kind={{ row.review_kind }}">{{ labels.get(row.review_kind, row.review_kind) }} {{ row.count }}</a>{% endfor %}
@@ -22,6 +23,8 @@
       {% if row.opportunity_id %}<a href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.subject_title or '장학' }}</a>
       {% elif row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}">{{ row.subject_title or '공고' }}</a>
       {% else %}{{ row.subject_title or row.entity_type }}{% endif %}</h2>
+    {% if p.ai_review and p.ai_review.reason %}<p class="ai-note"><span class="chip">AI 2차 검토</span> {{ p.ai_review.reason }} <span class="muted small">({{ p.ai_review.model }}, 확신 {{ {'high': '높음', 'medium': '보통', 'low': '낮음'}.get(p.ai_review.confidence, p.ai_review.confidence) }})</span></p>
+    {% elif p.ai_review and p.ai_review.error %}<p class="ai-note muted small">AI 2차 검토를 하지 못해 바로 올라왔습니다: {{ p.ai_review.error[:200] }}</p>{% endif %}
     {% if row.review_kind == 'revision_candidate' %}
       <p class="what">이 공고가 다른 장학의 {{ {'extension': '기간 연장', 'correction': '정정', 'cancellation': '취소', 'reopened': '재접수'}.get(p.kind, p.kind) }} 공고로 보입니다. 대상 장학을 고르고 바뀐 값을 원문과 대조한 뒤 새 version으로 적용하세요.</p>
       <p><a class="btn" href="/admin/reviews/{{ row.id }}/revision">비교하고 적용하기</a></p>
@@ -50,7 +53,7 @@
     <form class="action" method="post" action="/admin/reviews/{{ row.id }}/resolve">
       <input type="hidden" name="csrf" value="{{ csrf }}">
       <label class="small muted" for="reason-{{ row.id }}">처리 완료로 표시</label>
-      <textarea id="reason-{{ row.id }}" name="reason" rows="2" placeholder="판단 근거 (필수) (선택)"></textarea>
+      <textarea id="reason-{{ row.id }}" name="reason" rows="2" placeholder="판단 근거 (선택)"></textarea>
       <button class="secondary">검토 완료</button>
     </form>
     {% endif %}

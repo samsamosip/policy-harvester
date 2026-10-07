@@ -26,6 +26,7 @@ class TransientProviderError(RuntimeError):
     """The provider is temporarily unavailable; the job should wait and try again."""
 
 
+REVIEW_MAX_OUTPUT_TOKENS = 32000
 TRANSIENT_STATUS = {408, 409, 425, 429, 500, 502, 503, 504, 529}
 
 
@@ -89,10 +90,7 @@ async def _recorded(purpose: str, provider: str, call: Any, request: dict[str, A
 
 
 _JSON_SCHEMA_REJECTED: set[tuple[str, str]] = set()
-
-
-class _SkipJsonSchema(Exception):
-    pass
+_JSON_OBJECT_REJECTED: set[tuple[str, str]] = set()
 
 
 class StructuredOutputError(ValueError):
@@ -227,40 +225,36 @@ class OpenAIProvider:
 
             messages = [{"role": "system", "content": system},
                         {"role": "user", "content": json.dumps(payload, ensure_ascii=False)}]
-            output_mode = "json_schema"
             endpoint = (str(self.client.base_url), model)
-            try:
-                if endpoint in _JSON_SCHEMA_REJECTED:
-                    raise _SkipJsonSchema
-                response = await self._chat("extraction", dict(
-                    model=model,
-                    messages=messages,
-                    response_format={
+            # Native JSON Schema first; endpoints that refuse it get JSON object mode, and those
+            # that refuse that too (Claude 5 behind LiteLLM: both become a forced tool call) get
+            # the schema in the prompt only. Refusals are remembered for this process.
+            output_mode = ("prompt" if endpoint in _JSON_OBJECT_REJECTED else
+                           "json_object_fallback" if endpoint in _JSON_SCHEMA_REJECTED else "json_schema")
+            schema_system = (system + "\nReturn one JSON object that validates against this schema "
+                             "exactly:\n" + json.dumps(schema.model_json_schema(), ensure_ascii=False))
+            while True:
+                if output_mode == "json_schema":
+                    request = dict(model=model, messages=messages, response_format={
                         "type": "json_schema",
                         "json_schema": {"name": schema.__name__, "strict": True,
-                                        "schema": schema.model_json_schema()},
-                    },
-                    **parameters,
-                ))
-            except (BadRequestError, _SkipJsonSchema) as exc:
-                if isinstance(exc, BadRequestError):
-                    if exc.status_code != 400:
+                                        "schema": schema.model_json_schema()}})
+                else:
+                    request = dict(model=model, messages=[{"role": "system", "content": schema_system}, messages[1]],
+                                   **({"response_format": {"type": "json_object"}}
+                                      if output_mode == "json_object_fallback" else {}))
+                try:
+                    response = await self._chat("extraction", {**request, **parameters})
+                    break
+                except BadRequestError as exc:
+                    if exc.status_code != 400 or output_mode == "prompt":
                         raise
-                    # Remember for this process so later calls skip the doomed first request.
-                    _JSON_SCHEMA_REJECTED.add(endpoint)
-                output_mode = "json_object_fallback"
-                fallback_system = (
-                    system
-                    + "\nThe provider rejected native JSON Schema mode. Return one JSON object "
-                      "that validates against this schema exactly:\n"
-                    + json.dumps(schema.model_json_schema(), ensure_ascii=False)
-                )
-                response = await self._chat("extraction", dict(
-                    model=model,
-                    messages=[{"role": "system", "content": fallback_system}, messages[1]],
-                    response_format={"type": "json_object"},
-                    **parameters,
-                ))
+                    if output_mode == "json_schema":
+                        _JSON_SCHEMA_REJECTED.add(endpoint)
+                        output_mode = "json_object_fallback"
+                    else:
+                        _JSON_OBJECT_REJECTED.add(endpoint)
+                        output_mode = "prompt"
             if not response.choices:
                 raise ValueError("provider returned no choices for structured output")
             content = response.choices[0].message.content
@@ -294,7 +288,7 @@ class OpenAIProvider:
                         )},
                         {"role": "user", "content": json.dumps(repair_payload, ensure_ascii=False)},
                     ],
-                    response_format={"type": "json_object"},
+                    **({} if endpoint in _JSON_OBJECT_REJECTED else {"response_format": {"type": "json_object"}}),
                     **parameters,
                 ))
                 responses.append(response.model_dump(mode="json"))
@@ -571,8 +565,11 @@ class ExtractionTarget:
     parameters: dict[str, Any]
 
 
+ADAPTIVE_THINKING = re.compile(r"claude-(?:opus|sonnet|haiku|fable)-5", re.IGNORECASE)
+
+
 def structured_parameters(provider_name: str, settings: Settings,
-                          reasoning_effort: str | None) -> dict[str, Any]:
+                          reasoning_effort: str | None, model: str | None = None) -> dict[str, Any]:
     """Output cap and reasoning effort in each provider's own request vocabulary."""
     name = provider_name.lower()
     limit = settings.llm_max_output_tokens
@@ -583,10 +580,16 @@ def structured_parameters(provider_name: str, settings: Settings,
         return parameters
     if name in {"openai_compatible", "local"}:
         parameters = {"max_tokens": limit} if limit else {}
-        if reasoning_effort:
+        extra_body: dict[str, Any] = {}
+        if reasoning_effort and model and ADAPTIVE_THINKING.search(model):
+            # Claude 5 refuses fixed thinking budgets, which is what gateways turn reasoning_effort into.
+            extra_body.update(thinking={"type": "adaptive"}, output_config={"effort": reasoning_effort})
+        elif reasoning_effort:
             parameters["reasoning_effort"] = reasoning_effort
         if "openrouter.ai" in (settings.llm_base_url or ""):
-            parameters["extra_body"] = {"usage": {"include": True}}  # per-call cost in the response
+            extra_body["usage"] = {"include": True}  # per-call cost in the response
+        if extra_body:
+            parameters["extra_body"] = extra_body
         return parameters
     if name == "anthropic":
         return {"max_tokens": limit} if limit else {}
@@ -611,7 +614,8 @@ class ProviderRegistry:
         settings = base.model_copy(update=updates)
         return ExtractionTarget(ProviderRegistry(settings).llm(name), name,
                                 base.extraction_llm_model or base.llm_model,
-                                structured_parameters(name, settings, base.extraction_reasoning_effort))
+                                structured_parameters(name, settings, base.extraction_reasoning_effort,
+                                                      base.extraction_llm_model or base.llm_model))
 
     def crosscheck(self) -> ExtractionTarget | None:
         """The second-opinion model on the default llm_* endpoint, if one is configured."""
@@ -619,7 +623,19 @@ class ProviderRegistry:
         if not base.extraction_crosscheck_model:
             return None
         return ExtractionTarget(self.llm(), base.llm_provider, base.extraction_crosscheck_model,
-                                structured_parameters(base.llm_provider, base, None))
+                                structured_parameters(base.llm_provider, base, None,
+                                                      base.extraction_crosscheck_model))
+
+    def reviewer(self) -> ExtractionTarget | None:
+        """The second-review model on the default llm_* endpoint, if one is configured."""
+        base = self.settings
+        if not base.review_llm_model:
+            return None
+        # A verdict is short; the cap leaves room for thinking without inviting runaway output.
+        settings = base.model_copy(update={"llm_max_output_tokens": REVIEW_MAX_OUTPUT_TOKENS})
+        return ExtractionTarget(self.llm(), base.llm_provider, base.review_llm_model,
+                                structured_parameters(base.llm_provider, settings,
+                                                      base.review_reasoning_effort, base.review_llm_model))
 
     def llm(self, provider: str | None = None) -> LLMProvider:
         name = (provider or self.settings.llm_provider).lower()

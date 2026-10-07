@@ -82,6 +82,24 @@ def ole_payload(streams: dict[tuple[str, ...], bytes]) -> bytes:
     return header + struct.pack("<128I", *fat) + directory + body
 
 
+class AiReviewTests(unittest.TestCase):
+    def test_only_judgement_calls_are_reviewed(self):
+        from policy_harvester.pipeline.ai_review import reviewable
+
+        self.assertTrue(reviewable("identity_uncertain", {"operation": "same_notice_unmatched"}))
+        self.assertTrue(reviewable("revision_candidate", {}))
+        self.assertTrue(reviewable("other", {"quality_flags": [], "coverage": "partial"}))
+        self.assertFalse(reviewable("other", {"operation": "auto_publish_blocked"}))
+        self.assertFalse(reviewable("parsing_failed", {"error": "x"}))
+
+    def test_only_confident_dismissals_close_items(self):
+        from policy_harvester.pipeline.ai_review import ReviewVerdict
+
+        self.assertTrue(ReviewVerdict(verdict="dismiss", confidence="high", reason="r").dismissed)
+        self.assertFalse(ReviewVerdict(verdict="dismiss", confidence="medium", reason="r").dismissed)
+        self.assertFalse(ReviewVerdict(verdict="escalate", confidence="high", reason="r").dismissed)
+
+
 class TransientErrorTests(unittest.TestCase):
     def test_streamed_gateway_timeout_is_transient(self):
         from policy_harvester.ai.providers import is_transient

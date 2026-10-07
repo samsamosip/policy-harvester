@@ -81,7 +81,8 @@ services:
   worker-llm:
     <<: *worker
     # Waits minutes on the LLM per job; bounded by provider rate limits and cost, not the host.
-    command: policy-worker run --forever --stages structure
+    # Also runs the AI second review of held-back review items (REVIEW_LLM_MODEL).
+    command: policy-worker run --forever --stages structure,review
     deploy:
       replicas: ${WORKER_LLM_REPLICAS:-1}
 

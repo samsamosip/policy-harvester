@@ -202,9 +202,17 @@ PostgreSQL에 저장할 수 없는 NUL 문자는 저장 직전에 제거한다.
   `LLM_MAX_OUTPUT_TOKENS`(기본 131072)를 모든 추출 호출에 보낸다. 지정하지 않으면 provider 기본(약 6.4만)에서
   잘려 트랙이 많은 공고가 실패했다.
 - 교차 확인: 결과가 비었거나, 장학이 2개 이상이거나, 입력이 20,000자 이상이면(전체의 약 11%)
-  `EXTRACTION_CROSSCHECK_MODEL`로 한 번 더 추출한다. 장학 수가 다르면 더 많이 찾은 쪽을 쓰고
-  `crosscheck_disagreement` 경고로 검토에 보낸다. 주 모델이 실패하면 교차 확인 모델로 대신 추출한다.
+  `EXTRACTION_CROSSCHECK_MODEL`로 한 번 더 추출한다. 장학 수·신청 마감·금액·인원이 다르면 교차 확인 모델이
+  두 결과를 원문과 대조해 합치고, 합친 결과가 정상 흐름으로 간다(합치기에 실패하면 더 많이 찾은 쪽을 쓰고
+  `crosscheck_disagreement` 경고로 검토에 보낸다). 주 모델의 일시 장애(429·5xx·시간 초과)는 10분·30분 뒤
+  재시도하고, 마지막 시도에서만 교차 확인 모델로 대신 추출한다.
   각 실행은 별도 `extraction_runs` 행과 `llm_exchanges` 기록을 남긴다.
+- AI 2차 검토: 판단이 필요한 검토(품질 확인, 동일성 확인, 정정·연장 후보)는 사람에게 바로 보내지 않고
+  `REVIEW_LLM_MODEL`(기본 구성 `bedrock.anthropic.claude-opus-5-5`, `LLM_*` endpoint, thinking
+  `REVIEW_REASONING_EFFORT`)이 공고 원문·추출 결과·관련 장학을 보고 먼저 판단한다(`review` 작업, worker-llm이 처리).
+  문제가 없다고 high 확신일 때만 닫는다: 품질이면 초안의 품질을 올려 공개하고(`ai_review_cleared`), 다른 공고와의
+  병합 후보면 제안을 기각한다. 그 밖에는 판단 근거를 붙여 검토함에 올리고, 검토 모델이 끝내 실패해도 그대로
+  올린다. 처리·수집 실패나 DB 공개 규칙 거부는 판단할 것이 아니라 바로 올라간다. 모델을 비우면 꺼진다.
 - 인용이 block에 실제로 없으면 버리지 않고 warning과 `needs_review`로 남긴다.
 - 검증 전 결정론적 정리: code fence·trailing comma 제거, 모델이 `state`에 넣은 미정의 값(예: `inferred`)은
   `unknown`으로 내리고 값을 버림, 미확정 state에 붙은 값 제거, 인용 없는 `stated`는 `unknown`으로 내림,

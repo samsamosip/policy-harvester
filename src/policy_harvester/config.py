@@ -52,6 +52,11 @@ class Settings(BaseSettings):
     extraction_reasoning_effort: str | None = Field(None, pattern="^(low|medium|high)$")
     # Second model (on llm_* endpoint) run when the input looks multi-track or extraction fails.
     extraction_crosscheck_model: str | None = None
+    # Review items that hinge on model judgement (quality, identity, revision candidates) are
+    # first judged by this model on the llm_* endpoint; only what it still finds questionable
+    # reaches people. Unset: items go straight to the review queue.
+    review_llm_model: str | None = None
+    review_reasoning_effort: str | None = Field("high", pattern="^(low|medium|high)$")
 
     # The public /v1 API requires an X-API-Key issued in the admin UI. Turn off only for local use.
     api_key_required: bool = True
@@ -110,6 +115,8 @@ RUNTIME_KEYS: dict[str, str] = {
     "extraction.model": "extraction_llm_model",
     "extraction.reasoning_effort": "extraction_reasoning_effort",
     "extraction.crosscheck_model": "extraction_crosscheck_model",
+    "review.model": "review_llm_model",
+    "review.reasoning_effort": "review_reasoning_effort",
     "embedding.provider": "embedding_provider",
     "embedding.base_url": "embedding_base_url",
     "embedding.model": "embedding_model",

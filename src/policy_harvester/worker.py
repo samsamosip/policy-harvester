@@ -19,7 +19,8 @@ from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 from .ai.prompts import (EXTRACTION_PROMPT_VERSION_V2, EXTRACTION_SCHEMA_VERSION_V2,
-                         EXTRACTION_SYSTEM_PROMPT_V2, MERGE_PROMPT_VERSION, MERGE_SYSTEM_PROMPT)
+                         EXTRACTION_SYSTEM_PROMPT_V2, MERGE_PROMPT_VERSION, MERGE_SYSTEM_PROMPT,
+                         REVIEW_PROMPT_VERSION, REVIEW_SYSTEM_PROMPT)
 from .ai.providers import (EXCHANGE_LOG, ExtractionTarget, GenerationResult, ProviderRegistry,
                            TransientProviderError, Usage, is_transient, start_exchange_log,
                            validate_lenient_json)
@@ -33,6 +34,7 @@ from .documents.parsers import Block, ParseResult
 from .documents.vision import (VISION_PAGE_PROMPT_VERSION, VISION_PROMPT, VISION_PROMPT_VERSION,
                                merge_transcriptions, page_prompt, prepare_image)
 from .pipeline import LATEST_DOCUMENTS_SQL, OpportunityAssembler
+from .pipeline import ai_review
 from .pipeline.identity import IdentityCandidateService
 from .ai.exchanges import persist_exchanges
 from .pipeline.embeddings import activate_if_complete, ensure_profile
@@ -42,7 +44,7 @@ logger = logging.getLogger(__name__)
 WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 
 
-STAGES = ("parse_document", "structure", "embed")
+STAGES = ("parse_document", "structure", "embed", "review")
 BOILERPLATE_NOTICE_COUNT = 5
 HEARTBEAT_SECONDS = 60
 TRANSCRIPTION_CONCURRENCY = 4
@@ -213,6 +215,8 @@ class Worker:
                 await self._structure(session, job)
             elif job["stage"] == "embed":
                 await self._embed(session, job)
+            elif job["stage"] == "review":
+                await self._ai_review(session, job)
             else:
                 raise ValueError(f"worker stage is not implemented: {job['stage']}")
             await session.execute(text("""
@@ -221,6 +225,7 @@ class Worker:
             """), {"id": job["id"]})
             if job["stage"] == "parse_document":
                 await self._enqueue_structure_if_ready(session, job)
+            await self._defer_reviews(session, job)
             await session.commit()
         except asyncio.CancelledError:
             await session.rollback()
@@ -298,7 +303,11 @@ class Worker:
                  "available": datetime.now(UTC) + retry_delay(exc, job["attempt_count"]),
                  "retry": retry, "code": exc.__class__.__name__, "message": str(exc)[:4000],
                  "id": job["id"]})
-        if not retry:
+        if not retry and job["stage"] == "review":
+            # The second opinion could not be had: people decide, as without the AI review.
+            await ai_review.open_item(session, uuid.UUID(job["payload"]["review_id"]),
+                                      {"error": f"{exc.__class__.__name__}: {str(exc)[:500]}"})
+        elif not retry:
             kind = {"parse_document": "parsing_failed", "structure": "llm_validation_failed",
                     "embed": "embedding_failed"}[job["stage"]]
             metric_key = {"parse_document": "parser_errors", "structure": "ai_errors",
@@ -318,6 +327,49 @@ class Worker:
             """), {"kind": kind, "entity_id": entity_id,
                      "payload": json.dumps({"job_id": str(job["id"]), "error": str(exc)},
                                            ensure_ascii=False)})
+
+    async def _defer_reviews(self, session: AsyncSession, job: dict[str, Any]) -> None:
+        """Hand the judgement-call review items this job raised to the second-review model."""
+        created = session.info.pop(ai_review.CREATED_REVIEWS, [])
+        if not created:
+            return
+        settings = await resolved_settings(session)
+        if settings.review_llm_model:
+            deferred = await ai_review.defer(session, created, job)
+            if deferred:
+                logger.info("%d review item(s) sent to AI review", deferred)
+
+    async def _ai_review(self, session: AsyncSession, job: dict[str, Any]) -> None:
+        """Ask the review model whether a held-back item really needs people."""
+        review = (await session.execute(text("""
+            SELECT id, review_kind, status, entity_type, entity_id, opportunity_id, payload
+            FROM inha_policy.review_items WHERE id=:id
+        """), {"id": job["payload"]["review_id"]})).mappings().one_or_none()
+        if review is None or review["status"] != "ai_pending":
+            return
+        target = ProviderRegistry(await resolved_settings(session)).reviewer()
+        if target is None:  # turned off since the item was held back
+            await ai_review.open_item(session, review["id"], {"skipped": "review model not configured"})
+            return
+        context, notice_version_id = await ai_review.subject(session, dict(review))
+        if notice_version_id:
+            blocks, missing, _manifest, _hash = await extraction_input(session, notice_version_id)
+            context["source"] = ai_review.source_text(blocks)
+            context["unread_document_ids"] = [str(item) for item in missing]
+        # Nothing is pending; do not hold a transaction open while the model thinks.
+        await session.commit()
+        result = await target.provider.structured(
+            model=target.model, system=REVIEW_SYSTEM_PROMPT, payload=context,
+            schema=ai_review.ReviewVerdict, parameters=dict(target.parameters))
+        verdict = ai_review.ReviewVerdict.model_validate(result.value)
+        outcome = await ai_review.apply(session, dict(review), verdict, target.model)
+        logger.info("AI review %s: %s (%s)", review["id"], outcome, verdict.confidence)
+        await session.execute(text("""
+            UPDATE inha_policy.crawl_jobs SET result_metadata = result_metadata || CAST(:meta AS jsonb)
+            WHERE id=:id
+        """), {"id": job["id"], "meta": json.dumps({
+            "outcome": outcome, "model": target.model, "prompt_version": REVIEW_PROMPT_VERSION,
+            "input_tokens": result.usage.input_tokens, "output_tokens": result.usage.output_tokens})})
 
     async def _parse_document(self, session: AsyncSession, job: dict[str, Any]) -> None:
         payload = job["payload"]
