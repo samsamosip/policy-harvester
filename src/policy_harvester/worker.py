@@ -238,13 +238,15 @@ class Worker:
                   locked_at=NULL, heartbeat_at=now(), worker_id=NULL,
                   -- a shutdown (redeploy, scale-down) is not the job's failure: give the attempt back
                   attempt_count=greatest(attempt_count - 1, 0),
-                  error_code='CancelledError', error_message='worker interrupted'
+                  error_code='CancelledError',
+                  error_message='작업 처리기(worker)가 멈춰 중단됨. 자동으로 다시 실행합니다.'
                 WHERE id=:id
             """), {"id": job["id"]})
             if job["stage"] == "structure":
                 await session.execute(text("""
                     UPDATE inha_policy.extraction_runs SET status='failed',
-                      error_code='CancelledError', error_message='worker interrupted',
+                      error_code='CancelledError',
+                      error_message='작업 처리기(worker)가 멈춰 중단됨. 자동으로 다시 실행합니다.',
                       finished_at=now(), sealed_at=now()
                     WHERE notice_version_id=:version AND status='running'
                 """), {"version": job["notice_version_id"]})
@@ -268,7 +270,7 @@ class Worker:
     async def _claim(self, session: AsyncSession) -> dict[str, Any] | None:
         await session.execute(text("""
             UPDATE inha_policy.extraction_runs er SET status='failed',
-              error_code='StaleLock', error_message='worker heartbeat timeout',
+              error_code='StaleLock', error_message='작업 처리기(worker)가 15분 넘게 응답하지 않아 중단됨',
               finished_at=now(), sealed_at=now()
             FROM inha_policy.crawl_jobs j
             WHERE j.stage='structure' AND j.status='running'
@@ -279,7 +281,7 @@ class Worker:
         await session.execute(text("""
             UPDATE inha_policy.crawl_jobs SET status='retry', available_at=now(),
               worker_id=NULL, locked_at=NULL, error_code='StaleLock',
-              error_message='recovered after worker heartbeat timeout'
+              error_message='작업 처리기(worker)가 15분 넘게 응답하지 않아 회수함. 자동으로 다시 실행합니다.'
             WHERE status='running' AND heartbeat_at < now() - interval '15 minutes'
         """))
         row = (await session.execute(text("""
@@ -355,7 +357,7 @@ class Worker:
             return
         target = ProviderRegistry(await resolved_settings(session)).reviewer()
         if target is None:  # turned off since the item was held back
-            await ai_review.open_item(session, review["id"], {"skipped": "review model not configured"})
+            await ai_review.open_item(session, review["id"], {"skipped": "AI 2차 검토 모델이 설정되어 있지 않음"})
             return
         context, notice_version_id = await ai_review.subject(session, dict(review))
         if notice_version_id:
@@ -953,7 +955,7 @@ async def abandon_interrupted_runs(session: AsyncSession, *, older_than: timedel
         UPDATE inha_policy.crawl_runs SET status='failed', finished_at=now(),
           error_summary=coalesce(error_summary || ' / ', '') || :reason
         WHERE status='running' AND {condition} RETURNING id
-    """), {"reason": "interrupted: the crawling process stopped before the run finished",
+    """), {"reason": "중단됨: 수집 프로세스가 끝나기 전에 멈춰(재시작·배포) 실패로 정리했습니다. 다음 수집에서 다시 확인합니다.",
              "age": f"{int(older_than.total_seconds())} seconds" if older_than else None})).all()
     if rows:
         logger.warning("marked %d interrupted crawl run(s) as failed", len(rows))
