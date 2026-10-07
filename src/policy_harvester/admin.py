@@ -13,7 +13,7 @@ from datetime import UTC, datetime, timedelta
 from zoneinfo import ZoneInfo
 from pathlib import Path
 from typing import Any, Annotated, Callable
-from urllib.parse import quote
+from urllib.parse import urlencode, quote
 
 from argon2 import PasswordHasher
 from argon2.exceptions import VerifyMismatchError
@@ -1785,7 +1785,9 @@ async def users_page(request: Request, session: Session, admin: Admin) -> HTMLRe
         SELECT id, email, display_name, role, is_active, last_login_at, created_at
         FROM inha_policy.admin_users ORDER BY email
     """))).mappings().all()
-    return templates.TemplateResponse(request, "users.html", _context(request, admin, rows=rows))
+    return templates.TemplateResponse(request, "users.html", _context(
+        request, admin, rows=rows, created=request.query_params.get("created"),
+        error=request.query_params.get("error")))
 
 
 @router.post("/users")
@@ -1795,8 +1797,15 @@ async def create_user(request: Request, session: Session, admin: Admin) -> Redir
     display_name = str(form.get("display_name", "")).strip()
     role = str(form.get("role", "viewer"))
     password = str(form.get("password", ""))
-    if "@" not in email or not display_name or role not in ROLE_LEVEL or len(password) < 12:
-        raise HTTPException(422, "valid email, name, role, and a 12-character password are required")
+    problem = ("email 형식이 올바르지 않습니다" if "@" not in email else
+               "이름을 입력하세요" if not display_name else
+               "역할을 다시 선택하세요" if role not in ROLE_LEVEL else
+               "비밀번호는 12자 이상이어야 합니다" if len(password) < 12 else None)
+    if problem is None and (await session.execute(text(
+            "SELECT 1 FROM inha_policy.admin_users WHERE email=:email"), {"email": email})).first():
+        problem = f"{email} 계정이 이미 있습니다"
+    if problem:
+        return RedirectResponse(f"/admin/users?{urlencode({'error': problem})}", status_code=303)
     user_id = uuid.uuid4()
     await session.execute(text("""
         INSERT INTO inha_policy.admin_users
@@ -1808,7 +1817,7 @@ async def create_user(request: Request, session: Session, admin: Admin) -> Redir
                  after={"email": email, "display_name": display_name, "role": role},
                  reason="user administration")
     await session.commit()
-    return RedirectResponse("/admin/users", status_code=303)
+    return RedirectResponse(f"/admin/users?{urlencode({'created': email})}", status_code=303)
 
 
 @router.post("/users/{user_id}/toggle")

@@ -78,6 +78,13 @@ async def security_and_rate_limit(request: Request, call_next):
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers.setdefault("X-Frame-Options", "DENY")
     response.headers["Referrer-Policy"] = "same-origin"
+    if request.url.path.startswith("/admin"):
+        # Admin pages carry session state; never let a browser or proxy serve a stale copy
+        # (a CDN-cached user list after creating a user looked like the creation had failed).
+        response.headers.setdefault("Cache-Control", "no-store")
+    elif request.url.path.startswith("/v1"):
+        # A shared cache would answer requests without checking the API key or its rate limit.
+        response.headers.setdefault("Cache-Control", "private, no-store")
     response.headers.setdefault("Content-Security-Policy", (
         "default-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; "
         "form-action 'self'; frame-ancestors 'none'"

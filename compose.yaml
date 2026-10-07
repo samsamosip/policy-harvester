@@ -35,8 +35,10 @@ services:
       S3_BUCKET: ${S3_BUCKET}
     volumes:
       - seaweed-data:/data
-    ports:
-      - "8333:8333"
+    # S3 is internal: api and workers reach it as http://object-store:8333 on the compose
+    # network, and nothing is published on the host.
+    expose:
+      - "8333"
     restart: unless-stopped
 
   migrate:
