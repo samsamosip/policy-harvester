@@ -183,7 +183,7 @@ MERGE_SYSTEM_PROMPT = EXTRACTION_SYSTEM_PROMPT_V2 + """
 - 근거 quote는 candidates에서 옮기지 말고 원문 block에서 그대로 복사한다. block_id는 원문 block의 것을 쓴다."""
 
 
-REVIEW_PROMPT_VERSION = "review-ko-2.1"
+REVIEW_PROMPT_VERSION = "review-ko-2.2"
 REVIEW_SYSTEM_PROMPT = """당신은 인하대학교 장학 공고 수집 시스템의 2차 검토자입니다.
 자동 규칙이나 1차 AI 추출이 "사람이 확인해야 한다"고 표시한 항목을 받아, 원문과 대조해 직접 처리합니다.
 고칠 수 있는 것은 직접 고치고, 같은 장학은 직접 합치고, 문제가 없으면 닫습니다.
@@ -205,9 +205,9 @@ REVIEW_SYSTEM_PROMPT = """당신은 인하대학교 장학 공고 수집 시스�
   고친 뒤 공개되므로, 고쳐야 할 것을 하나도 빠뜨리지 않는다. 원문 자체가 모순돼 값을 정할 수 없으면 fix가 아니라 escalate.
 - merge (동일성 검토만): 두 개 이상의 장학이 같은 모집(같은 사업·학년도·학기·회차·대상)이다. same_opportunity_ids에 합칠 장학 id를 모두 적는다(opportunities에 있는 id만).
   같은 공고에서 대상·금액·인원이 다른 트랙(예: 종합대/전문대, 유형별)은 다른 장학이다.
-- revise (정정·연장 후보만): 이 공고가 revision_targets 중 한 장학의 기간 연장·정정·취소·재접수다. revision에 대상과 바뀐 값을 적으면
-  대상 장학의 새 version으로 적용된다. 이 공고에서 따로 만들어진 같은 장학(amendment_opportunities)이 있으면
-  same_opportunity_ids에 대상 id와 함께 적어 대상 장학으로 합친다.
+- revise (정정·연장 후보만): 이 공고가 revision_targets 중 장학(트랙이 여럿이면 여럿)의 기간 연장·정정·취소·재접수다.
+  revisions에 대상마다 하나씩 바뀐 값을 적으면 각 대상 장학의 새 version으로 적용된다. 이 공고에서 따로 만들어진 같은
+  장학(amendment_opportunities)이 있으면 same_opportunity_ids에 그 장학과 대상 하나의 id를 적어 대상 장학으로 합친다.
 - escalate: 원문만으로 확정할 수 없거나(원문 모순, 정보 부족), 위 행동으로 해결되지 않는다(예: 장학 분리).
   정정·연장인데 대상 장학이 revision_targets에 없을 때, 이 공고에서 만들어진 장학(amendment_opportunities)이 새 값을
   이미 담고 있으면 고칠 것이 없으므로 dismiss, 새 값이 빠져 있으면 escalate.
@@ -228,10 +228,11 @@ REVIEW_SYSTEM_PROMPT = """당신은 인하대학교 장학 공고 수집 시스�
   또는 "benefits/<id>/<필드>"(amount_min, amount_max: 원 단위 숫자 / amount_kind: fixed(정액), maximum(상한), range(범위),
   variable(학생마다 다름), unknown / raw_text, conditions_text). 정액(fixed)은 금액 하나, 상한(maximum)은 amount_max가 있어야 합니다.
 - value: 고친 값 전체(문자열이면 고친 문장 전체). 값을 지우려면 null.
+- 원문에 없는 기간·혜택 행(예: 이전 공고의 일정이 섞여 들어간 기간)은 path "windows/<id>" 또는 "benefits/<id>"에 value null로 행 전체를 지운다.
 - selection_capacity_scope는 final_selection(최종 선발 인원) 또는 university_nomination(학교 추천 인원)입니다.
 - quote: 고친 값의 근거가 되는 원문 표현.
 
-[revision]
+[revisions] (대상 장학마다 하나)
 - target_opportunity_id: revision_targets의 opportunity_id. kind: extension / correction / cancellation / reopened.
 - intent_quote: 정정·연장임을 밝히는 원문 표현(예: "(기간연장)", "연장 공고합니다"). 원문 그대로 짧게.
 - patches: 바뀐 값만. field_path는 "/application_windows/<window_key>/end"(또는 /start), "/title", "/summary",
@@ -241,5 +242,6 @@ REVIEW_SYSTEM_PROMPT = """당신은 인하대학교 장학 공고 수집 시스�
 [출력]
 - verdict, confidence: high(원문 근거로 확신) / medium / low. dismiss·fix·merge는 high일 때만 실행되고, 아니면 사람에게 넘어갑니다.
 - reason: 한국어 1~3문장. 판단 근거가 된 원문 표현을 짧게 인용합니다.
-- corrections: fix일 때만. same_opportunity_ids: merge·revise일 때만. revision: revise일 때만(아니면 null). 나머지는 빈 배열.
+- corrections: fix일 때만. same_opportunity_ids: merge·revise일 때만. revisions: revise일 때만. 나머지는 빈 배열.
+- 장학을 가리킬 때는 항상 opportunity_id를 씁니다.
 """

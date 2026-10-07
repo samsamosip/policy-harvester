@@ -64,7 +64,7 @@ class ReviewVerdict(BaseModel):
     reason: str = Field(max_length=2000)
     corrections: list[Correction] = Field(default_factory=list)
     same_opportunity_ids: list[str] = Field(default_factory=list)
-    revision: RevisionAction | None = None
+    revisions: list[RevisionAction] = Field(default_factory=list)
 
     @property
     def dismissed(self) -> bool:
@@ -170,7 +170,7 @@ async def subject(session: AsyncSession, review: dict[str, Any]) -> tuple[dict[s
     opportunities = []
     for opportunity_id in related_opportunity_ids(review):
         version = (await session.execute(text("""
-            SELECT ov.id, ov.opportunity_id, ov.title, ov.provider_name, ov.academic_year,
+            SELECT ov.opportunity_id, ov.title, ov.provider_name, ov.academic_year,
                    ov.academic_term, ov.round_label, ov.support_summary, ov.eligibility_summary,
                    ov.selection_capacity, ov.data_quality_status, ov.publication_state,
                    (SELECT string_agg(DISTINCT nv.title, ' / ') FROM inha_policy.opportunity_version_sources s
@@ -325,15 +325,22 @@ async def apply(session: AsyncSession, review: dict[str, Any], verdict: ReviewVe
                                                 verdict.same_opportunity_ids, verdict.reason,
                                                 review["payload"])
             elif verdict.verdict == "revise":
-                if review["review_kind"] != "revision_candidate" or verdict.revision is None:
-                    raise ActionRefused("revise applies to revision candidates with a revision")
-                record["revision"] = await _revise(session, review, verdict, model)
+                if review["review_kind"] != "revision_candidate" or not verdict.revisions:
+                    raise ActionRefused("revise applies to revision candidates with revisions")
+                if len({item.target_opportunity_id for item in verdict.revisions}) != len(verdict.revisions):
+                    raise ActionRefused("one revision per target opportunity")
+                record["revisions"] = [await _revise(session, review, action, verdict.reason, model)
+                                       for action in verdict.revisions]
                 if len(verdict.same_opportunity_ids) > 1:
+                    # The amendment's own copies merge into the target they amend.
                     own, _targets = await _revision_candidates(session, review)
-                    allowed = {item["opportunity_id"] for item in own} | {verdict.revision.target_opportunity_id}
-                    record["merges"] = await _merge(session, allowed, verdict.same_opportunity_ids,
-                                                    verdict.reason, review["payload"],
-                                                    winner_id=verdict.revision.target_opportunity_id)
+                    own_ids = {item["opportunity_id"] for item in own}
+                    targets = {item.target_opportunity_id for item in verdict.revisions}
+                    group = [item for item in verdict.same_opportunity_ids if item in targets]
+                    if len(group) != 1:
+                        raise ActionRefused("same_opportunity_ids must hold exactly one revision target")
+                    record["merges"] = await _merge(session, own_ids | set(group), verdict.same_opportunity_ids,
+                                                    verdict.reason, review["payload"], winner_id=group[0])
             if quality:
                 await _clear_quality(session, review)
             elif review["payload"].get("operation") == "cross_notice_candidates":
@@ -393,6 +400,22 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
             await session.execute(text(
                 f"UPDATE inha_policy.opportunity_versions SET {column}=:value WHERE id=:id"
             ), {"id": version_id, "value": value})
+        elif len(parts) == 2 and parts[0] in {"windows", "benefits"}:
+            if item.value is not None:
+                raise ActionRefused(f"{item.path}: a whole row can only be removed (value null)")
+            table = "application_windows" if parts[0] == "windows" else "benefits"
+            try:
+                row_id = uuid.UUID(parts[1])
+            except ValueError as exc:
+                raise ActionRefused(f"{item.path}: unknown id") from exc
+            removed = (await session.execute(text(f"""
+                DELETE FROM inha_policy.{table} WHERE id=:row AND opportunity_version_id=:id RETURNING raw_text
+            """), {"row": row_id, "id": version_id})).one_or_none()
+            if removed is None:
+                raise ActionRefused(f"{item.path}: not a row of this version")
+            before, value = removed[0], None
+            window_changes.pop(row_id, None)
+            benefit_changes.pop(row_id, None)
         elif len(parts) == 3 and parts[0] in {"windows", "benefits"}:
             table, fields = (("application_windows", WINDOW_FIELDS) if parts[0] == "windows"
                              else ("benefits", BENEFIT_FIELDS))
@@ -590,14 +613,11 @@ async def _clear_quality(session: AsyncSession, review: dict[str, Any]) -> None:
              "payload": json.dumps({"opportunity_version_id": str(source["id"]), "ai_reviewed": True})})
 
 
-async def _revise(session: AsyncSession, review: dict[str, Any], verdict: ReviewVerdict,
+async def _revise(session: AsyncSession, review: dict[str, Any], action: RevisionAction, reason: str,
                   model: str) -> dict[str, Any]:
-    """Apply the amendment to the earlier opportunity through the revision service, with the
+    """Apply the amendment to an earlier opportunity through the revision service, with the
     model's quotes located in the amendment notice's blocks."""
     from .revisions import EvidenceInput, FieldPatch, RevisionError, RevisionService, VerifiedRevision
-
-    action = verdict.revision
-    assert action is not None
     _own, targets = await _revision_candidates(session, review)
     if action.target_opportunity_id not in {item["opportunity_id"] for item in targets}:
         raise ActionRefused("the target must be one of the revision_targets shown")
@@ -622,7 +642,7 @@ async def _revise(session: AsyncSession, review: dict[str, Any], verdict: Review
         kind=action.kind, intent=evidence(action.intent_quote),
         patches=tuple(FieldPatch(item.field_path, item.value, evidence(item.quote)) for item in action.patches),
         same_cycle_verified=True, same_scope_verified=True, new_value_verified=True,
-        reason=f"AI 2차 검토({model}): {verdict.reason}", actor_id="ai_reviewer", actor_kind="ai_review")
+        reason=f"AI 2차 검토({model}): {reason}", actor_id="ai_reviewer", actor_kind="ai_review")
     try:
         version_id = await service.apply(revision)
     except RevisionError as exc:

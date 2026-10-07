@@ -219,9 +219,13 @@ class Worker:
                 await self._ai_review(session, job)
             else:
                 raise ValueError(f"worker stage is not implemented: {job['stage']}")
+            # An earlier attempt's error stays in the metadata, not on a job that succeeded.
             await session.execute(text("""
                 UPDATE inha_policy.crawl_jobs SET status='succeeded', finished_at=now(),
-                  heartbeat_at=now() WHERE id=:id
+                  heartbeat_at=now(), error_code=NULL, error_message=NULL,
+                  result_metadata = result_metadata || CASE WHEN error_code IS NULL THEN '{}'::jsonb
+                    ELSE jsonb_build_object('previous_error', error_code || ': ' || left(error_message, 500)) END
+                WHERE id=:id
             """), {"id": job["id"]})
             if job["stage"] == "parse_document":
                 await self._enqueue_structure_if_ready(session, job)
