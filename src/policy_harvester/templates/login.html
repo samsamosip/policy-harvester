@@ -1,0 +1,13 @@
+<!doctype html><html lang="ko"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1">
+<title>로그인 · Policy Harvester</title><style>
+:root{--ink:#1b2430;--muted:#7a8596;--line:#e1e5eb;--nav:#10283a;--brand:#0f6c8c;--bad:#b42318}
+*{box-sizing:border-box}body{margin:0;font:14px/1.55 "Pretendard","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;color:var(--ink);background:var(--nav);display:grid;place-items:center;min-height:100vh;padding:16px}
+.box{background:#fff;padding:32px;border-radius:10px;width:min(380px,100%);display:grid;gap:14px}
+h1{margin:0;font-size:20px}p{margin:0;color:var(--muted)}label{display:grid;gap:6px;font-size:13px}
+input,button{font:inherit;padding:10px 12px;border:1px solid #c9d1db;border-radius:6px}input:focus-visible,button:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
+button{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;cursor:pointer}.bad{color:var(--bad)}
+</style></head><body><form class="box" method="post"><div><h1>Policy Harvester</h1><p>인하대 장학 공고 수집·구조화 관리자</p></div>
+{% if error %}<p class="bad">{{ error }}</p>{% endif %}
+<label for="email">이메일<input id="email" type="email" name="email" required autofocus></label>
+<label for="password">비밀번호<input id="password" type="password" name="password" required></label>
+<button>로그인</button></form></body></html>

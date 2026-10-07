@@ -1,0 +1,52 @@
+[build-system]
+requires = ["hatchling>=1.27"]
+build-backend = "hatchling.build"
+
+[project]
+name = "policy-harvester"
+version = "0.1.0"
+description = "Versioned scholarship and youth-policy ingestion, review, and search API"
+readme = "README.md"
+requires-python = ">=3.12"
+dependencies = [
+  "alembic>=1.14,<2",
+  "argon2-cffi>=23.1,<26",
+  "boto3>=1.35,<2",
+  "cryptography>=44,<47",
+  "docling>=2.50,<3",
+  "fastapi>=0.115,<1",
+  "httpx[socks]>=0.28,<1",
+  "itsdangerous>=2.2,<3",
+  "jinja2>=3.1,<4",
+  "lxml>=5.3,<7",
+  "openai>=1.66,<3",
+  "openpyxl>=3.1,<4",
+  "pillow>=11,<13",
+  "psycopg[binary]>=3.2,<4",
+  "pydantic>=2.10,<3",
+  "pydantic-settings>=2.7,<3",
+  "pymupdf>=1.25,<2",
+  "python-docx>=1.1,<2",
+  "python-multipart>=0.0.20,<1",
+  "python-pptx>=1.0,<2",
+  "pyhwp>=0.1b15",
+  "sqlalchemy[asyncio]>=2.0.36,<3",
+  "uvicorn[standard]>=0.34,<1",
+]
+
+[project.optional-dependencies]
+anthropic = ["anthropic>=0.49,<1"]
+google = ["google-genai>=1.5,<2"]
+local-embeddings = ["sentence-transformers>=3.4,<6"]
+
+[project.scripts]
+policy-api = "policy_harvester.api:run"
+policy-worker = "policy_harvester.worker:main"
+policy-admin = "policy_harvester.cli:main"
+
+[tool.hatch.build.targets.wheel]
+packages = ["src/policy_harvester"]
+
+[tool.hatch.build.targets.wheel.force-include]
+"inha_parser.py" = "inha_parser.py"
+"revision_resolver.py" = "revision_resolver.py"

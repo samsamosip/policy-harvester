@@ -1,0 +1,5 @@
+{% extends "base.html" %}{% block title %}Attachment diff · Policy Harvester{% endblock %}
+{% block content %}<h1>{{ title }} · 첨부/이미지 diff</h1><p class="muted">{{ labels[0] }} → {{ labels[1] }}</p>
+<div class="table-wrap"><table><thead><tr><th>상태</th><th>Occurrence</th><th>이전</th><th>현재</th></tr></thead><tbody>
+{% for row in rows %}<tr><td class="{% if row.state == 'changed' or row.state == 'removed' %}bad{% elif row.state == 'added' %}ok{% endif %}">{{ row.state }}</td><td><code>{{ row.occurrence_key }}</code></td><td class="json">{% if row.before %}<pre>{{ row.before|pretty_json(2) }}</pre>{% endif %}</td><td class="json">{% if row.after %}<pre>{{ row.after|pretty_json(2) }}</pre>{% endif %}</td></tr>{% endfor %}
+</tbody></table></div>{% endblock %}

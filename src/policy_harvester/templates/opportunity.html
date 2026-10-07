@@ -1,0 +1,160 @@
+{% extends "base.html" %}{% block title %}{{ version.title }} · Policy Harvester{% endblock %}
+{% macro refs(items) %}{% for ref in items %}<div class="quote">“{{ ref.quote }}”{% if block_documents.get(ref.block_id) %} <a href="/admin/documents/{{ block_documents[ref.block_id] }}?block={{ ref.block_id }}#block-{{ ref.block_id }}">원문</a>{% endif %}{% if ref.evidence_type == 'inferred' %} <span class="chip warn">추론</span>{% endif %}</div>{% endfor %}{% endmacro %}
+{% macro show(value) %}{% if value is mapping and (value.date is defined or value.month is defined) %}{{ value.date or value.month or '' }}{% if value.time %} {{ value.time[:5] }}{% endif %}{% if not value.date and not value.month %}<span class="muted">{{ value.raw_text }}</span>{% endif %}{% elif value is mapping %}{{ value|pretty_json }}{% elif value is iterable and value is not string and value|select('in', ENUM_LABELS)|list|length == value|length and value|length %}{% for v in value %}{{ ENUM_LABELS[v] }}{% if not loop.last %}, {% endif %}{% endfor %}{% elif value is iterable and value is not string %}{{ value|join(', ') }}{% elif value is number and value >= 10000 and value % 10000 == 0 %}{{ '{:,}'.format((value / 10000)|int) }}만원{% else %}{{ value }}{% endif %}{% endmacro %}
+{% macro fact(item) %}{% if item is none %}<span class="muted">—</span>{% elif item.state in ['stated', 'resolved_update'] %}<span class="val">{{ show(item.value) }}</span>{{ refs(item.evidence) }}{% else %}<span class="state">{{ {'not_found': '원문에 없음', 'unknown': '판단 불가', 'explicitly_none': '제한 없음(명시)', 'conflict': '근거 충돌', 'parsing_failed': '읽지 못함'}.get(item.state, item.state) }}</span>{{ refs(item.evidence) }}{% endif %}{% endmacro %}
+{% set SEMESTER = {'spring': '1학기', 'fall': '2학기', 'summer': '여름학기', 'winter': '겨울학기', 'first_half': '상반기', 'second_half': '하반기', 'annual': '연간', 'other': '기타'} %}
+{% set FREQUENCY = {'once': '1회', 'per_semester': '학기마다', 'per_year': '연 1회', 'monthly': '매월', 'other': '기타', 'unknown': '원문에 없음'} %}
+{% set ENUM_LABELS = {'elementary': '초등학생', 'middle': '중학생', 'high': '고등학생', 'undergraduate': '대학생(학부)', 'graduate': '대학원생', 'enrolled': '재학', 'on_leave': '휴학', 'returning': '복학 예정', 'incoming': '신입생·입학 예정', 'completed': '수료·졸업', 'other': '기타'} %}
+{% set SUBMIT_TO = {'university': '학교', 'provider': '재단·기관', 'other': '기타'} %}
+{% block head %}<style>
+  .quote { font-size: 12px; color: var(--ink-2); margin-top: 3px; border-left: 2px solid var(--line); padding-left: 8px }
+  .state { font-size: 12px; color: var(--muted) } .state:before { content: "· " }
+  .val { font-weight: 600 }
+  .layout { display: grid; grid-template-columns: minmax(0, 1fr) 300px; gap: 16px; align-items: start }
+  .actions form { border-top: 1px solid var(--line-2); padding-top: 12px; margin-top: 12px }
+  .actions label { font-size: 12px; color: var(--muted) }
+  .item-line { padding: 8px 0; border-bottom: 1px solid var(--line-2) } .item-line:last-child { border-bottom: 0 }
+  @media (max-width: 1100px) { .layout { grid-template-columns: 1fr } }
+</style>{% endblock %}
+{% block content %}
+{% set item = extraction_item %}
+<div class="page-head">
+  <div>
+    <div class="crumbs"><a href="/admin/opportunities">장학 목록</a> / {{ version.provider_name or '기관 미상' }}</div>
+    <h1>{{ version.title }}</h1>
+    <p class="lede">
+      {% if opportunity.current_version_id %}<span class="chip ok">공개 중</span>{% else %}<span class="chip">공개 전</span>{% endif %}
+      {% if version.data_quality_status == 'complete' %}<span class="chip ok">완전</span>{% elif version.data_quality_status == 'partial' %}<span class="chip warn">일부 불완전</span>{% else %}<span class="chip bad">검토 필요</span>{% endif %}
+      {% if opportunity.lifecycle_status != 'active' %}<span class="chip">{{ opportunity.lifecycle_status }}</span>{% endif %}
+      <span class="muted small">v{{ version.version_no }} ({{ version.edit_kind }}) · {{ version.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+    </p>
+    {% if version.quality_flags %}<p class="small muted" style="margin:4px 0 0">품질 메모: {{ version.quality_flags|join(' · ') }}</p>{% endif %}
+  </div>
+</div>
+
+<div class="layout">
+<div class="stack">
+  <section class="panel">
+    <h2>요약</h2>
+    <p style="margin:0 0 12px">{{ version.summary or '' }}</p>
+    <dl class="kv">
+      <dt>이름</dt><dd>{{ fact(item.name) if item else version.title }}</dd>
+      <dt>기관</dt><dd>{{ fact(item.organization) if item else version.provider_name }}</dd>
+      <dt>연도·학기</dt><dd>{% if item %}{{ fact(item.academic_year) }}{% if item.semester.state in ['stated', 'resolved_update'] and item.semester.value in SEMESTER %}<span class="val">{{ SEMESTER[item.semester.value] }}</span>{{ refs(item.semester.evidence) }}{% else %}{{ fact(item.semester) }}{% endif %}{% else %}{{ version.academic_year or '' }} {{ version.academic_term or '' }}{% endif %}</dd>
+      <dt>회차</dt><dd>{{ fact(item.round_label) if item else (version.round_label or '—') }}</dd>
+    </dl>
+  </section>
+
+  <section class="panel">
+    <h2>신청 기간</h2>
+    {% set wlist = item.application_windows if item else [] %}
+    {% for window in wlist %}
+    <div class="item-line"><b>{{ {'application': '신청', 'nomination': '학교 추천', 'document_delivery': '서류 제출', 'additional_application': '추가 신청', 'result': '결과 발표', 'other': '기타 일정'}.get(window.stage, window.stage) }}</b>{% if window.label %} <span class="muted">{{ window.label }}</span>{% endif %}
+      <dl class="kv" style="margin-top:6px"><dt>시작</dt><dd>{{ fact(window.start) }}</dd><dt>마감</dt><dd>{{ fact(window.end) }}</dd>
+      {% if window.submit_to is defined and window.submit_to in SUBMIT_TO %}<dt>제출처</dt><dd>{{ SUBMIT_TO[window.submit_to] }}{% if window.closing_rule in ['first_come', 'rolling'] %} · {{ '선착순 마감' if window.closing_rule == 'first_come' else '상시 모집' }}{% endif %}</dd>
+      {% elif window.application_authority or window.channel %}<dt>접수처</dt><dd>{{ window.application_authority or '' }} {{ window.channel or '' }}</dd>{% endif %}</dl></div>
+    {% else %}{% for stored in windows %}<div class="item-line">{{ stored.window_kind }} {{ stored.start_date or '' }} ~ {{ stored.end_date or '' }} {{ stored.end_time or '' }}</div>{% else %}<p class="muted">원문에서 신청 기간을 찾지 못했습니다.</p>{% endfor %}{% endfor %}
+  </section>
+
+  <div class="cols">
+    <section class="panel">
+      <h2>지원 내용</h2>
+      {% for benefit in (item.benefits if item else []) %}<div class="item-line">
+        <div>{{ benefit.description }}</div>
+        <dl class="kv" style="margin-top:6px">
+          {% if benefit.amount_max.state == 'stated' or benefit.amount_min.state == 'stated' %}<dt>금액</dt><dd>{% if benefit.amount_min.state == 'stated' and benefit.amount_min.value != benefit.amount_max.value %}{{ fact(benefit.amount_min) }} ~ {% endif %}{{ fact(benefit.amount_max) }}</dd>{% endif %}
+          {% if benefit.tuition_percentage.state == 'stated' %}<dt>등록금 비율</dt><dd>{{ fact(benefit.tuition_percentage) }}%</dd>{% endif %}
+          {% if benefit.frequency is string %}<dt>지급 주기</dt><dd>{{ FREQUENCY.get(benefit.frequency, benefit.frequency) }}</dd><dt>지원 기간</dt><dd>{{ benefit.duration or '—' }}</dd>
+          {% else %}<dt>지급 주기</dt><dd>{{ fact(benefit.frequency) }}</dd><dt>지원 기간</dt><dd>{{ fact(benefit.duration) }}</dd>{% endif %}
+        </dl></div>
+      {% else %}<p class="muted">지원 내용을 찾지 못했습니다.</p>{% endfor %}
+    </section>
+    <section class="panel">
+      <h2>선발</h2>
+      {% if item %}{% set s = item.selection %}<dl class="kv">
+        {% if s.selection_count is defined %}<dt>최종 선발</dt><dd>{{ fact(s.selection_count) }}</dd><dt>학교 추천</dt><dd>{{ fact(s.nomination_quota) }}</dd>
+        {% else %}<dt>학교 추천</dt><dd>{{ fact(s.university_nomination_count) }}</dd><dt>최종 선발</dt><dd>{{ fact(s.final_selection_count) }}</dd>
+        <dt>모집 인원</dt><dd>{{ fact(s.recruitment_count) }}</dd>{% endif %}
+        {% if s.count_text %}<dt>인원 표기</dt><dd><span class="val">{{ s.count_text }}</span><div class="small muted">정확한 숫자가 아닌 원문 표기</div></dd>{% endif %}<dt>선발 방법</dt><dd>{{ fact(s.method) }}</dd>{% if s.result_date is defined %}<dt>결과 발표</dt><dd>{{ fact(s.result_date) }}</dd>{% endif %}</dl>
+      {% else %}<p class="muted">{{ version.selection_process or '' }}</p>{% endif %}
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>지원 자격</h2>
+    {% if item %}{% set e = item.eligibility %}
+    <dl class="kv">
+      <dt>대상</dt><dd>{{ fact(e.student_types) }}</dd><dt>학년</dt><dd>{{ fact(e.grades) }}</dd>
+      <dt>전공</dt><dd>{{ fact(e.majors) }}</dd><dt>성적</dt><dd>{{ fact(e.gpa_min) }}{% if e.gpa_scale.state == 'stated' %} / {{ e.gpa_scale.value }} 만점{% endif %}</dd>
+      <dt>소득 구간</dt><dd>{{ fact(e.income_bracket_max) }}</dd><dt>지역</dt><dd>{{ fact(e.regions) }}</dd>
+      <dt>학교</dt><dd>{{ fact(e.schools) }}</dd><dt>학적</dt><dd>{{ fact(e.enrollment_states) }}</dd>
+    </dl>
+    <h3>그 밖의 조건</h3>
+    {% for condition in e.residual_conditions %}<div class="item-line">{{ fact(condition) }}</div>{% else %}<p class="muted">없음</p>{% endfor %}
+    {% set source_text = e.original_text or (eligibility.original_eligibility_text if eligibility else '') %}
+    {% if source_text %}<details style="margin-top:10px"><summary>자격 원문 (근거로 인용된 block)</summary><p style="white-space:pre-wrap">{{ source_text }}</p></details>{% endif %}
+    {% elif eligibility %}<p>{{ eligibility.original_eligibility_text }}</p><p>{{ eligibility.residual_conditions_text }}</p>{% endif %}
+  </section>
+
+  <div class="cols">
+    <section class="panel">
+      <h2>신청 방법</h2>
+      {% for method in (item.application_methods if item else []) %}<div class="item-line"><b>{{ {'online': '온라인', 'email': '이메일', 'postal': '우편', 'visit': '방문', 'university_nomination': '학교 추천'}.get(method.method, method.method) }}</b> {{ method.instructions }}
+        {% if method.url.state == 'stated' %}<div>{{ fact(method.url) }}</div>{% endif %}{% if method.email.state == 'stated' %}<div>{{ fact(method.email) }}</div>{% endif %}{% if method.address.state == 'stated' %}<div>{{ fact(method.address) }}</div>{% endif %}</div>
+      {% else %}<p class="muted">없음</p>{% endfor %}
+      <h3>연락처</h3>
+      {% for contact in (item.contacts if item else []) %}<div class="item-line small">{{ fact(contact.organization) }} {{ fact(contact.department) }} {{ fact(contact.phone) }} {{ fact(contact.email) }}</div>{% else %}<p class="muted">없음</p>{% endfor %}
+    </section>
+    <section class="panel">
+      <h2>제출 서류</h2>
+      {% for doc in (item.required_documents if item else version.required_documents) %}<div class="item-line">{{ doc.name }} <span class="chip {{ 'brand' if doc.requiredness == 'required' else '' }}">{{ {'required': '필수', 'conditional': '해당자', 'optional': '선택', 'unknown': '미상'}.get(doc.requiredness, doc.requiredness) }}</span>{% if doc.condition %}<div class="small muted">{{ doc.condition }}</div>{% endif %}{{ refs(doc.evidence or []) }}</div>{% else %}<p class="muted">없음</p>{% endfor %}
+    </section>
+  </div>
+
+  <section class="panel">
+    <h2>출처</h2>
+    {% for source in sources %}<div class="item-line">{% if source.relation_kind != 'original' %}<span class="chip info">{{ source.relation_kind }}</span> {% endif %}<a href="/admin/notices/{{ source.notice_id }}">{{ source.title }}</a> · <a class="small" href="{{ source.canonical_url }}" rel="noreferrer">원문 ↗</a></div>{% endfor %}
+    <h3>근거로 쓴 문서</h3>
+    {% for doc in documents %}<div class="small"><a href="/admin/documents/{{ doc.id }}">{{ doc.original_filename or ('본문 이미지' if doc.role == 'inline_image' else '게시글 본문') }}</a> <span class="muted">{{ doc.parser_name }} · {{ doc.status }}</span></div>{% endfor %}
+  </section>
+
+  {% if item %}<details class="panel"><summary>AI 추출 원본(JSON)</summary><pre style="white-space:pre-wrap">{{ item|pretty_json(2) }}</pre></details>{% endif %}
+</div>
+
+<aside class="stack">
+  <section class="panel actions">
+    <h2>작업</h2>
+    {% if versions|length > 1 %}<div class="small">version: {% for v in versions %}<a href="?version={{ v.version_no }}"{% if v.version_no == version.version_no %} style="font-weight:700"{% endif %}>v{{ v.version_no }}</a> {% endfor %} · <a href="/admin/opportunities/{{ opportunity.id }}/diff">변경 비교</a></div>{% endif %}
+    {% if admin.role in ['reviewer','admin'] %}
+      {% if version.publication_state == 'draft' %}
+      <form class="action" method="post" action="/admin/opportunity-versions/{{ version.id }}/publish"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="publish-reason">공개 사유</label><input id="publish-reason" name="reason" value="원문 대조 확인" placeholder="사유 (선택)"><button>이 version 공개</button></form>
+      {% endif %}
+      {% if opportunity.current_version_id %}
+      <form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/unpublish"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="unpublish-reason">비공개 사유</label><input id="unpublish-reason" name="reason" placeholder="사유 (선택)"><button class="danger">비공개로 전환</button></form>
+      {% endif %}
+      <form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/overrides"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="override-path">값 직접 수정 (공개 API에 덮어씀)</label>
+        <select id="override-path" name="field_path"><option value="/title">제목</option><option value="/description">설명</option><option value="/organization">기관</option><option value="/status">상태</option></select>
+        <input id="override-value" name="value_json" placeholder='"새 값" (JSON)' required><input type="hidden" name="scope_key" value="main">
+        <input id="override-reason" name="reason" placeholder="근거 (선택)"><button class="secondary">수정 저장</button></form>
+      <form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/merge"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <label for="merge-winner">다른 장학과 같은 모집이면 병합</label><input id="merge-winner" name="winner_id" placeholder="대표 장학 ID" required>
+        <input id="merge-reason" name="reason" placeholder="같은 모집인 근거 (선택)"><button class="secondary">대표 장학으로 병합</button></form>
+      {% if opportunity.lifecycle_status == 'merged' %}<form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/unmerge"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="병합 취소 근거 (선택)"><button class="secondary">병합 취소</button></form>{% endif %}
+    {% endif %}
+    {% if admin.role in ['operator','reviewer','admin'] %}
+      <form class="action" method="post" action="/admin/opportunity-versions/{{ version.id }}/embed"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="상세 화면에서 재임베딩" placeholder="사유 (선택)"><button class="secondary">검색 색인 다시 만들기</button></form>
+    {% endif %}
+    <p class="small muted" style="margin:12px 0 0">장학 ID <code>{{ opportunity.id }}</code></p>
+  </section>
+  <section class="panel" id="reviews">
+    <h2>검토 항목</h2>
+    {% for review in reviews %}<div class="item-line small"><span class="chip {{ 'warn' if review.status in ['open','in_review'] else '' }}">{{ review.status }}</span> {{ review.review_kind }}{% if review.payload.operation %} · {{ review.payload.operation }}{% endif %}
+      {% if review.review_kind == 'identity_uncertain' and review.status in ['open','in_review'] %} · <a href="/admin/reviews/{{ review.id }}/identity">비교</a>{% endif %}</div>
+    {% else %}<p class="muted small">없음</p>{% endfor %}
+  </section>
+</aside>
+</div>
+{% endblock %}

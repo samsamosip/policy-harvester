@@ -1,0 +1,48 @@
+{% extends "base.html" %}{% block title %}{{ title }} · Policy Harvester{% endblock %}
+{% set hidden = ['notice_id'] %}
+{% block content %}
+<div class="page-head"><div><h1>{{ title }}</h1>
+  {% if table_key == 'jobs' %}<p class="lede">수집·파싱·AI 추출·임베딩 작업입니다. 실패한 작업은 원인을 확인하고 재시도할 수 있습니다.</p>
+  {% elif table_key == 'documents' %}<p class="lede">게시글 본문과 첨부를 파싱한 결과입니다. 문서를 누르면 block 단위로 봅니다.</p>
+  {% elif table_key in ['notices', 'opportunities'] %}<p class="lede">운영 확인용 원시 데이터입니다. 평소에는 <a href="/admin/{{ table_key }}">{{ '공고 목록' if table_key == 'notices' else '장학 목록' }}</a>을 쓰세요.</p>{% endif %}
+</div><div class="muted num">{{ rows|length }}건{% if rows|length >= 300 %} (최근 순 일부){% endif %}</div></div>
+{% if rows %}
+<div class="table-wrap"><table>
+<thead><tr>{% for column in columns if column not in hidden %}<th title="{{ column }}">{{ column_label(column) }}</th>{% endfor %}<th></th></tr></thead>
+<tbody>
+{% for row in rows %}<tr>
+  {% for column in columns if column not in hidden %}{% set value = row[column] %}
+  <td{% if value is mapping or (value is iterable and value is not string) %} class="json"{% endif %}>
+    {%- if column == 'status' %}<span class="chip {{ 'ok' if value == 'succeeded' else ('bad' if value == 'failed' else ('warn' if value in ['partial','retry'] else 'info')) }}">{{ value }}</span>
+    {%- elif column == 'stage' %}<span class="chip">{{ {'parse_document': '파싱', 'structure': 'AI 추출', 'embed': '임베딩', 'fetch_detail': '상세 수집', 'discover': '목록 수집'}.get(value, value) }}</span>
+    {%- elif table_key == 'documents' and column == 'document' %}<a href="/admin/documents/{{ row.id }}">{{ value }}</a>
+    {%- elif table_key == 'documents' and column == 'notice' %}<a href="/admin/notices/{{ row.notice_id }}">{{ value }}</a>
+    {%- elif value is sameas true or value is sameas false %}<span class="chip {{ 'ok' if value else '' }}">{{ '예' if value else '아니오' }}</span>
+    {%- elif value.__class__.__name__ == 'datetime' %}<span class="num" style="white-space:nowrap" title="{{ value }}">{{ value|kst }}</span>
+    {%- elif value.__class__.__name__ == 'UUID' %}<span class="mono" title="{{ value }}">{{ (value|string)[:8] }}</span>
+    {%- elif value is mapping %}{{ value|pretty_json(2) }}
+    {%- elif value is iterable and value is not string %}{{ value|join(', ') }}
+    {%- elif column in ['error_message', 'job_key'] and value %}<span class="small">{{ value[:200] }}</span>
+    {%- elif value is none %}<span class="muted">—</span>
+    {%- else %}{{ value }}{% endif -%}
+  </td>{% endfor %}
+  <td style="white-space:nowrap">
+  {% if table_key == 'sources' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/sources/{{ row.id }}/crawl"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="manual run" placeholder="사유 (선택)"><button>지금 수집</button></form>{% endif %}
+  {% if table_key == 'sources' and admin.role == 'admin' %}<details><summary>설정</summary>
+    <form class="action" method="post" action="/admin/sources/{{ row.id }}/proxy"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="password" name="proxy_url" placeholder="socks5://user:pass@host:port (비우면 해제)" aria-label="proxy"><input name="reason" placeholder="변경 사유 (선택)"><button class="secondary">Proxy 저장/해제</button></form>
+    <form class="action" method="post" action="/admin/sources/{{ row.id }}/toggle"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="변경 사유 (선택)"><button class="secondary">수집 켜기/끄기</button></form>
+    <form class="action" method="post" action="/admin/sources/{{ row.id }}/raw-policy"><input type="hidden" name="csrf" value="{{ csrf }}"><select name="public_raw_text" aria-label="원문 공개"><option value="false">원문 비공개</option><option value="true">원문 공개 허용</option></select><input name="reason" placeholder="정책 변경 사유 (선택)"><button class="secondary">원문 공개 정책</button></form>
+  </details>{% endif %}
+  {% if table_key == 'jobs' and admin.role in ['operator','reviewer','admin'] and row.status in ['failed', 'retry'] %}<form class="inline" method="post" action="/admin/jobs/{{ row.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="manual retry" placeholder="사유 (선택)"><button class="secondary">재시도</button></form>{% endif %}
+  {% if table_key == 'documents' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/documents/{{ row.id }}/reprocess"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="manual reprocess" placeholder="사유 (선택)"><button class="secondary">재파싱</button></form>{% endif %}
+  {% if table_key == 'ai-runs' %}<a href="/admin/ai-runs/{{ row.id }}/compare">이전 실행과 비교</a>{% endif %}
+  {% if table_key == 'opportunities' %}<a href="/admin/opportunities/{{ row.opportunity_id }}?version={{ row.version_no }}">상세</a>{% endif %}
+  {% if table_key == 'notices' %}<a href="/admin/notices/{{ row.id }}">상세</a>{% endif %}
+  {% if table_key == 'embedding-profiles' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/embedding-profiles/{{ row.id }}/backfill"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="profile backfill" placeholder="사유 (선택)"><button class="secondary">전체 재색인</button></form>{% endif %}
+  {% if table_key == 'embedding-profiles' and admin.role == 'admin' and not row.is_active %}<form class="inline" method="post" action="/admin/embedding-profiles/{{ row.id }}/activate"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="활성화 사유 (선택)"><button class="secondary">활성 전환</button></form>{% endif %}
+  {% if table_key == 'manual-overrides' and row.action == 'set' and admin.role in ['reviewer','admin'] %}<form class="inline" method="post" action="/admin/overrides/{{ row.id }}/remove"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="제거 사유 (선택)"><button class="secondary">수정 취소</button></form>{% endif %}
+  </td>
+</tr>{% endfor %}
+</tbody></table></div>
+{% else %}<div class="panel empty">데이터가 없습니다.</div>{% endif %}
+{% endblock %}

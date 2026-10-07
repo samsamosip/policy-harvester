@@ -1,0 +1,55 @@
+{% extends "base.html" %}{% block title %}대시보드 · Policy Harvester{% endblock %}
+{% block head %}<style>
+  .todo { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px }
+  .todo a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; color: var(--ink) }
+  .todo a:hover { border-color: var(--brand); text-decoration: none }
+  .todo b { display: block; font-size: 26px; line-height: 1.2; margin-top: 4px }
+  .todo .hint { font-size: 12px; color: var(--muted) }
+  .funnel { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); overflow: hidden }
+  .funnel div { padding: 14px 16px; border-right: 1px solid var(--line-2) } .funnel div:last-child { border-right: 0 }
+  .funnel span { display: block; font-size: 12px; color: var(--muted) } .funnel b { font-size: 22px }
+  .funnel small { display: block; color: var(--muted); font-size: 12px }
+  @media (max-width: 900px) { .funnel { grid-template-columns: repeat(2, 1fr) } }
+</style>{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>대시보드</h1><p class="lede">인하대 장학 게시판 수집부터 구조화·공개까지의 현황입니다.</p></div></div>
+
+<div class="todo">
+  <a href="/admin/reviews"><span>검토 대기</span><b class="num">{{ admin.nav.reviews }}</b><span class="hint">정정·연장, 동일성, 품질 확인</span></a>
+  <a href="/admin/opportunities?state=draft"><span>공개 전 장학</span><b class="num">{{ admin.nav.drafts }}</b><span class="hint">초안 상태 최신 version</span></a>
+  <a href="/admin/table/jobs"><span>실패한 작업</span><b class="num {% if admin.nav.failed_jobs %}bad{% endif %}">{{ admin.nav.failed_jobs }}</b><span class="hint">재시도 한도를 넘긴 job</span></a>
+</div>
+
+<h2>처리 현황</h2>
+<div class="funnel" style="margin-bottom:8px">
+  <div><span>수집한 장학 공고</span><b class="num">{{ funnel.notices }}</b><small>범위 밖 {{ funnel.excluded }}건 제외</small></div>
+  <div><span>파싱 완료</span><b class="num">{{ funnel.parsed }}</b><small>대기 {{ queue.parse_document.waiting if queue.parse_document else 0 }}건</small></div>
+  <div><span>AI 추출 완료</span><b class="num">{{ funnel.extracted }}</b><small>대기 {{ queue.structure.waiting if queue.structure else 0 }}건</small></div>
+  <div><span>장학 항목</span><b class="num">{{ funnel.opportunities }}</b><small>한 공고에 여러 개 가능</small></div>
+  <div><span>공개 중</span><b class="num">{{ funnel.published }}</b><small>공개 API 노출</small></div>
+</div>
+<p class="muted small" style="margin:0 0 24px">작업 큐: {% for stage, label in [('parse_document','파싱'),('structure','AI 추출'),('embed','임베딩')] %}{% set q = queue.get(stage) %}{{ label }} 대기 {{ q.waiting if q else 0 }} · 실행 {{ q.running if q else 0 }} · 실패 {{ q.failed if q else 0 }}{% if not loop.last %} / {% endif %}{% endfor %}</p>
+
+<div class="cols">
+  <section class="panel">
+    <h2>마감 임박 장학</h2>
+    {% for row in closing %}
+      <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-2)">
+        <div><a href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.title }}</a><div class="small muted">{{ row.provider_name or '' }}{% if row.benefit %} · {{ row.benefit }}{% endif %}</div></div>
+        <div style="text-align:right"><span class="chip {{ row.deadline.kind }}">{{ row.deadline.label }}</span><div class="small muted num">{{ row.deadline.date or '' }}</div></div>
+      </div>
+    {% else %}<p class="muted">신청 가능한 장학이 아직 없습니다. AI 추출이 끝나면 여기에 마감 순으로 표시됩니다.</p>{% endfor %}
+    <p style="margin:12px 0 0"><a href="/admin/opportunities">장학 목록 전체 보기 →</a></p>
+  </section>
+  <section class="panel">
+    <h2>검토 대기 종류</h2>
+    {% for row in reviews %}<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/reviews?kind={{ row.review_kind }}">{{ review_labels.get(row.review_kind, row.review_kind) }}</a><span class="num">{{ row.count }}</span></div>
+    {% else %}<p class="muted">대기 중인 검토가 없습니다.</p>{% endfor %}
+    <h2 style="margin-top:22px">최근 수집</h2>
+    {% for run in runs %}<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line-2)" class="small">
+      <span><span class="chip {{ 'ok' if run.status == 'succeeded' else ('warn' if run.status in ['partial','running'] else 'bad') }}">{{ run.status }}</span> {{ run.started_at.strftime('%m-%d %H:%M') if run.started_at else '' }}</span>
+      <span class="num muted">게시글 {{ run.discovered_count }} · 변경 {{ run.changed_count }} · 실패 {{ run.failed_count }}</span></div>
+    {% else %}<p class="muted">수집 기록이 없습니다.</p>{% endfor %}
+  </section>
+</div>
+{% endblock %}

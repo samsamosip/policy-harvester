@@ -1,0 +1,19 @@
+{% extends "base.html" %}{% block title %}사용자 · Policy Harvester{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>사용자</h1>
+  <p class="lede">관리자 화면 계정입니다. 역할: viewer(조회), operator(수집·재처리), reviewer(검토·수정), admin(설정·계정).</p></div></div>
+<section class="panel"><h2>계정 만들기</h2>
+  <form class="fields" method="post" action="/admin/users"><input type="hidden" name="csrf" value="{{ csrf }}">
+    <label class="field">Email<input type="email" name="email" autocomplete="off" required></label>
+    <label class="field">이름<input name="display_name" required></label>
+    <label class="field">역할<select name="role"><option>viewer</option><option>operator</option><option>reviewer</option><option>admin</option></select></label>
+    <label class="field">임시 비밀번호 (12자 이상)<input type="password" name="password" minlength="12" autocomplete="new-password" required></label>
+    <button>계정 생성</button>
+  </form></section>
+<div class="table-wrap"><table><thead><tr><th>Email</th><th>이름</th><th>역할</th><th>상태</th><th>마지막 로그인</th><th>생성</th><th></th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{ row.email }}</td><td>{{ row.display_name }}</td><td><span class="chip brand">{{ row.role }}</span></td>
+  <td><span class="chip {{ 'ok' if row.is_active else 'bad' }}">{{ '활성' if row.is_active else '비활성' }}</span></td>
+  <td class="num small">{{ row.last_login_at|kst or '—' }}</td><td class="num small">{{ row.created_at|kst }}</td>
+  <td>{% if row.id != admin.id %}<form class="inline" method="post" action="/admin/users/{{ row.id }}/toggle"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">{{ '비활성화' if row.is_active else '활성화' }}</button></form>{% else %}<span class="muted small">본인</span>{% endif %}</td></tr>
+{% endfor %}</tbody></table></div>
+{% endblock %}

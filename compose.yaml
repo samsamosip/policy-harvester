@@ -1,0 +1,109 @@
+x-worker: &worker
+  build: .
+  env_file: .env
+  volumes:
+    - object-files:/data/objects
+  restart: unless-stopped
+  depends_on:
+    migrate:
+      condition: service_completed_successfully
+    object-store:
+      condition: service_started
+
+services:
+  postgres:
+    image: pgvector/pgvector:pg17
+    environment:
+      POSTGRES_DB: policy
+      POSTGRES_USER: policy
+      POSTGRES_PASSWORD: policy
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U policy -d policy"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  object-store:
+    image: chrislusf/seaweedfs:4.47
+    environment:
+      AWS_ACCESS_KEY_ID: ${S3_ACCESS_KEY}
+      AWS_SECRET_ACCESS_KEY: ${S3_SECRET_KEY}
+      S3_BUCKET: ${S3_BUCKET}
+    volumes:
+      - seaweed-data:/data
+    ports:
+      - "8333:8333"
+    restart: unless-stopped
+
+  migrate:
+    build: .
+    command: alembic upgrade head
+    env_file: .env
+    depends_on:
+      postgres:
+        condition: service_healthy
+
+  api:
+    build: .
+    env_file: .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - object-files:/data/objects
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      object-store:
+        condition: service_started
+
+  # Stage-split workers. They share one queue (jobs are claimed with FOR UPDATE SKIP LOCKED and
+  # kept alive by a heartbeat), so the counts are free to change: set WORKER_*_REPLICAS in .env.
+  worker-parse:
+    <<: *worker
+    # CPU-heavy: Docling layout/table models, about 2-3 GB RAM and 4 threads per process.
+    command: policy-worker run --forever --stages parse_document
+    environment:
+      OMP_NUM_THREADS: "4"
+      MKL_NUM_THREADS: "4"
+    deploy:
+      replicas: ${WORKER_PARSE_REPLICAS:-1}
+
+  worker-llm:
+    <<: *worker
+    # Waits minutes on the LLM per job; bounded by provider rate limits and cost, not the host.
+    command: policy-worker run --forever --stages structure
+    deploy:
+      replicas: ${WORKER_LLM_REPLICAS:-1}
+
+  worker-embed:
+    <<: *worker
+    # CPU work with the internal ONNX embedding model (ONNX_THREADS), network-bound otherwise.
+    command: policy-worker run --forever --stages embed
+    deploy:
+      replicas: ${WORKER_EMBED_REPLICAS:-1}
+
+  # All stages in one process; also the service for one-off commands (docker compose run worker ...).
+  worker:
+    <<: *worker
+    command: policy-worker run --forever
+    deploy:
+      replicas: ${WORKER_REPLICAS:-0}
+
+  scheduler:
+    build: .
+    command: policy-worker schedule --forever
+    env_file: .env
+    volumes:
+      - object-files:/data/objects
+    depends_on:
+      migrate:
+        condition: service_completed_successfully
+      object-store:
+        condition: service_started
+
+volumes:
+  postgres-data:
+  seaweed-data:
+  object-files:

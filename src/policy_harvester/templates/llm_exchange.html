@@ -1,0 +1,25 @@
+{% extends "base.html" %}{% block title %}LLM 호출 · Policy Harvester{% endblock %}
+{% block head %}<style>
+  .pair { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px }
+  .pair pre { max-height: calc(100vh - 260px); overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font-size: 12px }
+  @media (max-width: 1100px) { .pair { grid-template-columns: 1fr } }
+</style>{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <div class="crumbs"><a href="/admin/notices">공고 목록</a>{% if exchange.notice_id %} / <a href="/admin/notices/{{ exchange.notice_id }}">{{ exchange.title }}</a>{% endif %}</div>
+  <h1>LLM 호출 원본</h1>
+  <p class="lede">provider에 보낸 요청 body와 받은 응답 body를 가공 없이 보여줍니다. 실패한 호출은 오류와 provider 오류 body를 남깁니다.</p>
+</div></div>
+<dl class="panel kv">
+  <dt>용도</dt><dd>{{ {'extraction': 'AI 추출', 'repair': 'JSON 수리', 'transcription': '이미지 전사'}.get(exchange.purpose, exchange.purpose) }}</dd>
+  <dt>모델</dt><dd>{{ exchange.provider_name }} · {{ exchange.model_id }}</dd>
+  <dt>결과</dt><dd><span class="chip {{ 'ok' if exchange.status == 'ok' else 'bad' }}">{{ exchange.status }}</span> {{ ((exchange.latency_ms or 0) / 1000)|round(1) }}초 · 토큰 {{ exchange.input_tokens or '-' }} / {{ exchange.output_tokens or '-' }}</dd>
+  <dt>시각</dt><dd>{{ exchange.started_at }}</dd>
+  {% if exchange.extraction_run_id %}<dt>추출 실행</dt><dd class="mono small">{{ exchange.extraction_run_id }}</dd>{% endif %}
+  {% if exchange.error_message %}<dt>오류</dt><dd class="bad">{{ exchange.error_message }}</dd>{% endif %}
+</dl>
+<div class="pair">
+  <section><h2>요청 <a class="small" href="/admin/llm-exchanges/{{ exchange.id }}/request.json">JSON 받기</a></h2><pre class="panel">{{ request_body }}</pre></section>
+  <section><h2>응답 {% if response_body %}<a class="small" href="/admin/llm-exchanges/{{ exchange.id }}/response.json">JSON 받기</a>{% endif %}</h2>{% if response_body %}<pre class="panel">{{ response_body }}</pre>{% else %}<div class="panel empty">응답 없음</div>{% endif %}</section>
+</div>
+{% endblock %}

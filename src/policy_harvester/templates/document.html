@@ -1,0 +1,64 @@
+{% extends "base.html" %}{% block title %}{{ document.original_filename or '게시글 본문' }} · Policy Harvester{% endblock %}
+{% set mime = (document.detected_mime or '').split(';')[0] %}
+{% if document.origin_kind == 'html_body' %}{% set kind = 'html' %}
+{% elif mime == 'application/pdf' %}{% set kind = 'pdf' %}
+{% elif mime.startswith('image/') %}{% set kind = 'image' %}
+{% else %}{% set kind = 'download' %}{% endif %}
+{% block head %}<style>
+  .viewer { display: grid; grid-template-columns: minmax(0, 1fr) minmax(0, 1fr); gap: 16px; align-items: start }
+  .source { position: sticky; top: 16px; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); overflow: hidden }
+  .source header { display: flex; justify-content: space-between; gap: 8px; padding: 10px 14px; border-bottom: 1px solid var(--line); font-size: 13px }
+  .source iframe { display: block; width: 100%; height: calc(100vh - 120px); border: 0; background: #fff }
+  .source .img { max-height: calc(100vh - 120px); overflow: auto; padding: 12px; text-align: center } .source .img img { max-width: 100% }
+  .blocks { display: grid; gap: 8px }
+  .block { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 10px 12px; scroll-margin-top: 16px }
+  .block.hit { border-color: #e8a33d; box-shadow: 0 0 0 2px #fbe3b8 }
+  .block .meta { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; font-size: 12px; color: var(--muted); margin-bottom: 6px }
+  .block .text { white-space: pre-wrap; overflow-wrap: anywhere }
+  .block table { font-size: 12px; margin-top: 6px } .block td { padding: 4px 6px; border: 1px solid var(--line-2) }
+  @media (max-width: 1100px) { .viewer { grid-template-columns: 1fr } .source { position: static } .source iframe { height: 70vh } }
+</style>{% endblock %}
+{% block content %}
+<div class="page-head"><div>
+  <div class="crumbs"><a href="/admin/notices">공고 목록</a> / <a href="/admin/notices/{{ document.notice_id }}">{{ document.notice_title }}</a></div>
+  <h1>{{ document.original_filename or '게시글 본문' }}</h1>
+  <p class="lede">왼쪽은 수집한 원문, 오른쪽은 파싱 결과(block)입니다. AI 추출의 근거 인용은 오른쪽 block을 가리킵니다.</p>
+</div>
+<div class="small muted" style="text-align:right">{{ document.parser_name }} {{ document.parser_version }} · <span class="chip {{ 'ok' if document.status == 'succeeded' else ('warn' if document.status == 'partial' else 'bad') }}">{{ document.status }}</span>
+  {% for flag in document.quality_flags %}<span class="chip">{{ flag }}</span>{% endfor %}<br>
+  {{ mime or 'text/html' }}{% if document.byte_size %} · {{ (document.byte_size / 1024)|round|int }} KB{% endif %}
+  {% if document.binary_asset_id %} · <a href="/admin/assets/{{ document.binary_asset_id }}/download">원본 다운로드</a>{% endif %}</div>
+</div>
+{% if document.error_message %}<pre class="panel bad">{{ document.error_message }}</pre>{% endif %}
+
+<div class="viewer">
+  <section class="source" aria-label="원문">
+    <header><b>원문</b><span class="muted">{% if kind == 'html' %}수집 당시 게시글 HTML(스크립트 차단){% elif kind == 'pdf' %}PDF 원본{% elif kind == 'image' %}이미지 원본{% else %}브라우저에서 열 수 없는 형식{% endif %}</span></header>
+    {% if kind == 'html' %}<iframe name="source-frame" sandbox title="게시글 원문" src="/admin/documents/{{ document.id }}/source"></iframe>
+    {% elif kind == 'pdf' %}<iframe name="source-frame" title="PDF 원문" src="/admin/assets/{{ document.binary_asset_id }}/view{% if highlight_page %}#page={{ highlight_page }}{% endif %}"></iframe>
+    {% elif kind == 'image' %}<div class="img"><img src="/admin/assets/{{ document.binary_asset_id }}/view" alt="{{ document.original_filename or '본문 이미지' }} 원본"></div>
+    {% else %}<div class="empty">{{ document.original_filename }}은(는) 브라우저가 직접 보여주지 못하는 형식입니다.<br>
+      <a class="btn" style="margin-top:12px" href="/admin/assets/{{ document.binary_asset_id }}/download">원본 내려받기</a><br>
+      <span class="small">오른쪽 파싱 결과와 대조하세요.</span></div>{% endif %}
+  </section>
+
+  <section class="blocks" aria-label="파싱 결과">
+    <div class="small muted">block {{ blocks|length }}개</div>
+    {% for block in blocks %}
+    <article class="block{% if highlight == block.id|string %} hit{% endif %}" id="block-{{ block.id }}">
+      <div class="meta">
+        <span>#{{ block.block_index }}</span>
+        <span class="chip">{{ {'paragraph': '문단', 'heading': '제목', 'table': '표', 'list_item': '목록', 'image': '이미지', 'caption': '캡션', 'footnote': '각주', 'page_header': '머리글', 'page_footer': '바닥글'}.get(block.block_kind, block.block_kind) }}</span>
+        {% if block.page_number %}{% if kind == 'pdf' %}<a href="/admin/assets/{{ document.binary_asset_id }}/view#page={{ block.page_number }}" target="source-frame">p.{{ block.page_number }} 보기</a>{% else %}<span>p.{{ block.page_number }}</span>{% endif %}{% endif %}
+        {% if block.ocr_used %}<span class="chip info">LLM 전사</span>{% endif %}
+        {% if block.extraction_metadata.recovered_from %}<span class="chip warn">{{ block.extraction_metadata.recovered_from }}로 복구</span>{% endif %}
+      </div>
+      {% if block.table_data and block.table_data.rows %}
+        <div style="overflow-x:auto"><table>{% for row in block.table_data.rows %}<tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>{% endfor %}</table></div>
+      {% else %}<div class="text">{{ block.text_content }}</div>{% endif %}
+      <details class="small" style="margin-top:6px"><summary>block 정보</summary><div class="mono">{{ block.id }} · {{ block.source_path or '' }}</div><pre>{{ block.extraction_metadata|pretty_json(2) }}</pre></details>
+    </article>
+    {% else %}<div class="panel empty">block이 없습니다.</div>{% endfor %}
+  </section>
+</div>
+{% endblock %}

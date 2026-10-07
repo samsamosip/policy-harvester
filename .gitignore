@@ -1,0 +1,26 @@
+# Secrets and local configuration (copy .env.example to .env)
+.env
+.env.*
+!.env.example
+
+# Python
+.venv/
+__pycache__/
+*.py[cod]
+*.egg-info/
+build/
+dist/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# Local data, models and backups
+data/
+backups/
+*.dump
+*.log
+
+# Editors and OS
+.idea/
+.vscode/
+.DS_Store

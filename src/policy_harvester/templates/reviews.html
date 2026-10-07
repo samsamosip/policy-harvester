@@ -1,0 +1,62 @@
+{% extends "base.html" %}{% block title %}검토함 · Policy Harvester{% endblock %}
+{% block head %}<style>
+  .review { display: grid; grid-template-columns: minmax(0, 1fr) 320px; gap: 16px }
+  .review + .review { margin-top: 12px }
+  .review .what { font-size: 13px; color: var(--ink-2); margin: 6px 0 0 }
+  @media (max-width: 1000px) { .review { grid-template-columns: 1fr } }
+</style>{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>검토함</h1><p class="lede">자동으로 확정하지 않고 사람의 판단을 기다리는 항목입니다. 종류별로 해야 할 일이 다릅니다.</p></div></div>
+<div class="tabs">
+  <a class="{% if not kind %}on{% endif %}" href="/admin/reviews">전체 {{ counts|sum(attribute='count') }}</a>
+  {% for row in counts %}<a class="{% if kind == row.review_kind %}on{% endif %}" href="?kind={{ row.review_kind }}">{{ labels.get(row.review_kind, row.review_kind) }} {{ row.count }}</a>{% endfor %}
+</div>
+
+{% for row in rows %}
+{% set p = row.payload %}
+<article class="panel review">
+  <div>
+    <div><span class="chip {{ 'info' if row.review_kind in ['revision_candidate', 'identity_uncertain'] else 'warn' }}">{{ labels.get(row.review_kind, row.review_kind) }}</span>
+      <span class="small muted">{{ row.created_at.strftime('%Y-%m-%d %H:%M') }}</span></div>
+    <h2 style="margin:8px 0 0">
+      {% if row.opportunity_id %}<a href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.subject_title or '장학' }}</a>
+      {% elif row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}">{{ row.subject_title or '공고' }}</a>
+      {% else %}{{ row.subject_title or row.entity_type }}{% endif %}</h2>
+    {% if row.review_kind == 'revision_candidate' %}
+      <p class="what">이 공고가 다른 장학의 {{ {'extension': '기간 연장', 'correction': '정정', 'cancellation': '취소', 'reopened': '재접수'}.get(p.kind, p.kind) }} 공고로 보입니다. 대상 장학을 고르고 바뀐 값을 원문과 대조한 뒤 새 version으로 적용하세요.</p>
+      <p><a class="btn" href="/admin/reviews/{{ row.id }}/revision">비교하고 적용하기</a></p>
+    {% elif row.review_kind == 'identity_uncertain' %}
+      {% if p.operation == 'cross_notice_candidates' %}<p class="what">다른 공고에서 나온 비슷한 장학 {{ p.candidates|length }}건이 있습니다. 같은 모집이면 병합하고, 다른 회차·다른 사업이면 다르다고 표시하세요.</p>
+      {% elif p.operation in ['same_notice_unmatched', 'same_slot_renamed'] %}<p class="what">같은 공고를 다시 추출했는데 이름이 달라 기존 장학과 자동으로 연결하지 않았습니다. 같은 장학이면 병합하세요.</p>
+      {% else %}<p class="what">AI가 이 공고를 기존 장학의 {{ {'same_cycle': '같은 회차', 'new_cycle': '새 회차', 'uncertain': '관련 공고'}.get(p.candidate_kind, '관련 공고') }}로 보았습니다(“{{ p.normalized_name }}”{% if p.academic_year %}, {{ p.academic_year }}{% endif %}). 공고를 확인하고, 같은 모집이면 해당 장학 화면에서 병합하세요.</p>
+      {% for ref in (p.evidence or [])[:2] %}<p class="small muted">“{{ ref.quote }}”</p>{% endfor %}{% endif %}
+      {% if row.opportunity_id %}<p><a class="btn" href="/admin/reviews/{{ row.id }}/identity">후보 비교하기</a></p>{% endif %}
+    {% elif row.review_kind in ['parsing_failed', 'embedding_failed'] %}
+      <p class="what">{{ '게시글·문서를 읽지 못했습니다' if row.review_kind == 'parsing_failed' else '검색 색인을 만들지 못했습니다' }}{% if p.stage %} ({{ p.stage }}){% endif %}. 원인을 고친 뒤 다시 수집하거나 재처리하세요.</p>
+      <p class="small mono">{{ (p.error or '')[:240] }}</p>
+    {% elif row.review_kind == 'llm_validation_failed' %}
+      <p class="what">AI 추출이 반복해서 실패했습니다. 원인: <span class="mono">{{ (p.error or '')[:240] }}</span></p>
+    {% elif row.review_kind == 'other' and p.quality_flags %}
+      <p class="what">자동 공개 기준을 통과하지 못했습니다. 추출 결과를 원문과 대조해 직접 공개하거나 그대로 두세요.</p>
+      <ul class="small">{% for flag in p.quality_flags[:5] %}<li>{{ flag[:200] }}</li>{% endfor %}{% if p.quality_flags|length > 5 %}<li class="muted">외 {{ p.quality_flags|length - 5 }}건</li>{% endif %}</ul>
+    {% elif p.operation == 'auto_publish_blocked' %}
+      <p class="what">자동 공개가 DB 규칙에 막혔습니다: <span class="mono">{{ p.error }}</span></p>
+    {% else %}
+      <details><summary>내용 보기</summary><pre class="small" style="white-space:pre-wrap">{{ p|pretty_json(2) }}</pre></details>
+    {% endif %}
+  </div>
+  <div>
+    {% if admin.role in ['reviewer','admin'] %}
+    <form class="action" method="post" action="/admin/reviews/{{ row.id }}/resolve">
+      <input type="hidden" name="csrf" value="{{ csrf }}">
+      <label class="small muted" for="reason-{{ row.id }}">처리 완료로 표시</label>
+      <textarea id="reason-{{ row.id }}" name="reason" rows="2" placeholder="판단 근거 (필수) (선택)"></textarea>
+      <button class="secondary">검토 완료</button>
+    </form>
+    {% endif %}
+  </div>
+</article>
+{% else %}
+<div class="panel empty">대기 중인 검토가 없습니다.</div>
+{% endfor %}
+{% endblock %}

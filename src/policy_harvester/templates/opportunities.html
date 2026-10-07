@@ -1,0 +1,53 @@
+{% extends "base.html" %}{% block title %}장학 목록 · Policy Harvester{% endblock %}
+{% macro qs(overrides) %}{% set merged = dict(filters, **overrides) %}?{% for key, value in merged.items() if value %}{{ key }}={{ value|string|urlencode }}{% if not loop.last %}&{% endif %}{% endfor %}{% endmacro %}
+{% block content %}
+<div class="page-head">
+  <div><h1>장학 목록</h1><p class="lede">공고에서 AI로 추출한 장학 항목입니다. 한 공고에 장학이 여럿이면 각각 나옵니다. 행을 누르면 원문 근거와 함께 상세를 봅니다.</p></div>
+  <div class="muted num">{{ total }}건</div>
+</div>
+
+<div class="tabs" role="navigation" aria-label="마감 필터">
+  {% for value, label in [('', '전체'), ('open', '신청 가능'), ('closing', '2주 내 마감'), ('closed', '마감'), ('unknown', '기한 미상')] %}
+  <a class="{% if filters.deadline == value %}on{% endif %}" href="{{ qs({'deadline': value, 'page': ''}) }}">{{ label }}</a>{% endfor %}
+</div>
+<form class="filters" method="get">
+  <input type="hidden" name="deadline" value="{{ filters.deadline }}">
+  <input id="q" name="q" value="{{ filters.q }}" placeholder="장학명·기관·공고 제목 검색" size="28" aria-label="검색어">
+  <select id="state" name="state" aria-label="공개 상태">
+    <option value="">공개 상태 전체</option><option value="live" {% if filters.state == 'live' %}selected{% endif %}>공개 중</option><option value="draft" {% if filters.state == 'draft' %}selected{% endif %}>공개 전</option>
+  </select>
+  <select id="quality" name="quality" aria-label="품질">
+    <option value="">품질 전체</option><option value="complete" {% if filters.quality == 'complete' %}selected{% endif %}>완전</option><option value="partial" {% if filters.quality == 'partial' %}selected{% endif %}>일부 불완전</option><option value="needs_review" {% if filters.quality == 'needs_review' %}selected{% endif %}>검토 필요</option>
+  </select>
+  <select id="sort" name="sort" aria-label="정렬">
+    <option value="deadline" {% if filters.sort == 'deadline' %}selected{% endif %}>마감 가까운 순</option><option value="recent" {% if filters.sort == 'recent' %}selected{% endif %}>최근 추출 순</option>
+  </select>
+  <button>적용</button>{% if filters.q or filters.state or filters.quality %}<a href="?deadline={{ filters.deadline }}">초기화</a>{% endif %}
+</form>
+
+{% if rows %}
+<div class="table-wrap"><table>
+  <thead><tr><th>장학</th><th>신청 마감</th><th>지원</th><th>선발</th><th>상태</th><th>출처 공고</th></tr></thead>
+  <tbody>
+  {% for row in rows %}
+  <tr>
+    <td style="min-width:260px"><a class="title" href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.title }}</a>
+      <div class="sub">{{ row.provider_name or '기관 미상' }}{% if row.academic_year %} · {{ row.academic_year }}{% endif %}{% if row.version_no > 1 %} · v{{ row.version_no }}{% endif %}</div></td>
+    <td class="num" style="white-space:nowrap"><span class="chip {{ row.deadline.kind }}">{{ row.deadline.label }}</span><div class="sub">{{ row.deadline.date or '' }}</div></td>
+    <td class="num">{{ row.benefit or '—' }}</td>
+    <td class="num">{% if row.selection_capacity is not none %}{{ row.selection_capacity }}명{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td style="white-space:nowrap">
+      {% if row.live %}<span class="chip ok">공개 중</span>{% else %}<span class="chip">공개 전</span>{% endif %}
+      {% if row.data_quality_status == 'complete' %}<span class="chip ok">완전</span>{% elif row.data_quality_status == 'partial' %}<span class="chip warn">일부 불완전</span>{% else %}<span class="chip bad">검토 필요</span>{% endif %}
+      {% if row.open_reviews %}<div class="sub"><a href="/admin/opportunities/{{ row.opportunity_id }}#reviews">검토 {{ row.open_reviews }}건</a></div>{% endif %}
+    </td>
+    <td style="max-width:320px">{% if row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}">{{ row.notice_title }}</a>{% if row.source_count > 1 %}<div class="sub">외 {{ row.source_count - 1 }}건</div>{% endif %}{% endif %}</td>
+  </tr>
+  {% endfor %}
+  </tbody>
+</table></div>
+<div class="pager num">{% if page > 1 %}<a href="{{ qs({'page': page - 1}) }}">← 이전</a>{% endif %}<span>{{ page }} / {{ pages }}</span>{% if page < pages %}<a href="{{ qs({'page': page + 1}) }}">다음 →</a>{% endif %}</div>
+{% else %}
+<div class="panel empty">조건에 맞는 장학이 없습니다.{% if not filters.q and not filters.state and not filters.quality %} 공고의 AI 추출이 끝나면 여기에 나타납니다. 처리 상태는 <a href="/admin/notices">공고 목록</a>에서 볼 수 있습니다.{% endif %}</div>
+{% endif %}
+{% endblock %}
