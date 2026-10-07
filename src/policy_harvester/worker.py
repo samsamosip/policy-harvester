@@ -497,14 +497,18 @@ class Worker:
         registry = ProviderRegistry(await resolved_settings(session))
         primary, crosscheck = registry.extraction(), registry.crosscheck()
         context = (job, blocks, missing, manifest, input_hash)
+        # Re-assembling (split, forced match) works on the sealed extraction and never calls a model.
+        reassembly = bool(job["payload"].get("forced_opportunity_id")
+                          or job["payload"].get("target_item_index") is not None)
         try:
-            outcome = await self._extract(session, primary, *context)
+            outcome = await self._extract(session, primary, *context, cache_only=reassembly)
         except Exception as exc:
             if crosscheck is None:
                 raise
-            logger.warning("primary extraction failed (%s); falling back to %s",
+            logger.warning("primary extraction %s (%s); falling back to %s",
+                           "has no sealed run" if isinstance(exc, LookupError) else "failed",
                            exc.__class__.__name__, crosscheck.model)
-            outcome = await self._extract(session, crosscheck, *context)
+            outcome = await self._extract(session, crosscheck, *context, cache_only=reassembly)
         else:
             if crosscheck is not None and needs_crosscheck(blocks, outcome.bundle):
                 # Re-assembling a sealed result (split, retry) must reach the same decision without

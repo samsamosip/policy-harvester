@@ -304,11 +304,12 @@ class AdminFlowTests(unittest.IsolatedAsyncioTestCase):
             WHERE status='succeeded' AND processing_code_version <> 'fixture'
               AND provider_name <> 'fixture'
         """)}
-        # Extraction uses the configured extraction model; the cross-check model may add runs.
-        self.assertIn((primary.provider_name, primary.model), runs)
+        # Only the configured extraction model and its cross-check/fallback model are used. Which of
+        # the two produced the runs depends on the providers' availability (a 503 falls back).
         allowed = {(primary.provider_name, primary.model)}
         if crosscheck:
             allowed.add((crosscheck.provider_name, crosscheck.model))
+        self.assertTrue(runs)
         self.assertLessEqual(runs, allowed)
         multi = [row for row in await self._opportunities(SEEDED["multi"]["version"])]
         initial = await self._rows("""
