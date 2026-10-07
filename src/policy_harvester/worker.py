@@ -402,9 +402,11 @@ class Worker:
                     "UPDATE inha_policy.documents SET sealed_at=now() WHERE id=:id"
                 ), {"id": document_id})
                 return
+        # Parsing is minutes of CPU (Docling, rhwp); off the event loop, the heartbeat keeps the
+        # job's lock fresh and a shutdown signal can still return the job to the queue.
+        parsed = await asyncio.to_thread(self.parsers.parse, raw, filename, detected)
         result = await self._transcribe_images(
-            session, self.parsers.parse(raw, filename, detected),
-            config["llm.provider"]["value"], vision_model)
+            session, parsed, config["llm.provider"]["value"], vision_model)
         if origin == "html_body":
             result = with_title_block(result, source["title"])
         attempt = (await session.execute(text("""
