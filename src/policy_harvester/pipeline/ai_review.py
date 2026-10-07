@@ -22,6 +22,7 @@ from typing import Any, Literal
 
 from pydantic import BaseModel, ConfigDict, Field
 from sqlalchemy import text
+from sqlalchemy.exc import DBAPIError
 from sqlalchemy.ext.asyncio import AsyncSession
 
 SOURCE_CHAR_LIMIT = 60000
@@ -340,8 +341,10 @@ async def apply(session: AsyncSession, review: dict[str, Any], verdict: ReviewVe
                 for candidate in review["payload"].get("candidates") or []:
                     if candidate.get("opportunity_id") not in merged or verdict.verdict != "merge":
                         await _reject_proposal(session, candidate.get("decision_id"), verdict.reason)
-    except ActionRefused as exc:
-        record["action_refused"] = str(exc)
+    except (ActionRefused, DBAPIError) as exc:
+        # The action does not fit the item or the database's rules: people decide instead.
+        record["action_refused"] = (str(exc) if isinstance(exc, ActionRefused)
+                                    else str(getattr(exc, "orig", exc)).splitlines()[0][:500])
         await open_item(session, review["id"], record)
         return "escalated"
     outcome = {"dismiss": "dismissed", "fix": "corrected", "merge": "merged",
@@ -376,6 +379,7 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
     if state is None or state["published_at"] is not None:
         raise ActionRefused("only an unpublished draft can be corrected")
     done = []
+    window_changes: dict[uuid.UUID, dict[str, Any]] = {}
     for item in corrections:
         parts = item.path.strip("/").split("/")
         if len(parts) == 1:
@@ -403,12 +407,42 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
             if before is None:
                 raise ActionRefused(f"{item.path}: not a row of this version")
             before = before[0]
+            if table == "application_windows":  # written per row below, with its precision
+                window_changes.setdefault(row_id, {})[parts[2]] = value
+                done.append({"path": item.path, "before": _plain(before), "after": _plain(value),
+                             "quote": item.quote})
+                continue
+            if parts[2] in {"amount_min", "amount_max"}:
+                kind = (await session.execute(text(
+                    "SELECT amount_kind FROM inha_policy.benefits WHERE id=:row"), {"row": row_id})).scalar_one()
+                if kind == "fixed":  # a fixed amount is one number: both bounds move together
+                    await session.execute(text(
+                        "UPDATE inha_policy.benefits SET amount_min=:value, amount_max=:value WHERE id=:row"
+                    ), {"row": row_id, "value": value})
             await session.execute(text(
                 f"UPDATE inha_policy.{table} SET {parts[2]}=:value WHERE id=:row"
             ), {"row": row_id, "value": value})
         else:
             raise ActionRefused(f"{item.path} is not correctable")
         done.append({"path": item.path, "before": _plain(before), "after": _plain(value), "quote": item.quote})
+    for row_id, changes in window_changes.items():
+        current = dict((await session.execute(text("""
+            SELECT start_date, start_time, end_date, end_time FROM inha_policy.application_windows
+            WHERE id=:row
+        """), {"row": row_id})).mappings().one())
+        current.update(changes)
+        for side in ("start", "end"):
+            day, moment = current[f"{side}_date"], current[f"{side}_time"]
+            if day is None and moment is not None:
+                raise ActionRefused(f"windows/{row_id}/{side}_time needs a {side}_date")
+            # Precision follows the corrected date and time, as the assembler sets it.
+            current[f"{side}_precision"] = ("unknown" if day is None else "date" if moment is None
+                                            else "minute" if moment.second == 0 else "second")
+        columns = sorted(set(changes) | {"start_precision", "end_precision"})
+        await session.execute(text(f"""
+            UPDATE inha_policy.application_windows SET {", ".join(f"{key}=:{key}" for key in columns)}
+            WHERE id=:row
+        """), {"row": row_id, **{key: current[key] for key in columns}})
     await session.execute(text("""
         UPDATE inha_policy.opportunity_versions
         SET quality_flags=array_append(quality_flags, 'ai_corrected') WHERE id=:id
