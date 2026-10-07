@@ -359,10 +359,18 @@ async def asset_view(asset_id: uuid.UUID, session: Session, admin: Viewer) -> Re
     """), {"id": asset_id})).mappings().one_or_none()
     if row is None:
         raise HTTPException(404)
+    storage_key, mime = row["storage_key"], row["detected_mime"].split(";")[0]
     if not row["detected_mime"].startswith(INLINE_MIME):
-        raise HTTPException(415, "this format cannot be shown in the browser; download it instead")
-    payload = build_object_store(get_settings()).get(row["storage_key"])
-    return Response(payload, media_type=row["detected_mime"].split(";")[0], headers={
+        # HWP and other formats browsers cannot show are previewed through their PDF rendering.
+        rendered = (await session.execute(text("""
+            SELECT storage_key FROM inha_policy.derived_files
+            WHERE binary_asset_id=:id AND kind='pdf_render' ORDER BY created_at DESC LIMIT 1
+        """), {"id": asset_id})).scalar_one_or_none()
+        if rendered is None:
+            raise HTTPException(415, "this format cannot be shown in the browser; download it instead")
+        storage_key, mime = rendered, "application/pdf"
+    payload = build_object_store(get_settings()).get(storage_key)
+    return Response(payload, media_type=mime, headers={
         "Content-Disposition": "inline", "Cache-Control": "private, no-store",
         "X-Content-Type-Options": "nosniff", "X-Frame-Options": "SAMEORIGIN",
         "Content-Security-Policy": "default-src 'none'; img-src 'self'; frame-ancestors 'self'"})

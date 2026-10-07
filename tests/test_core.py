@@ -473,6 +473,58 @@ class ApplicationStatusTests(unittest.TestCase):
                          "cancelled")
 
 
+class OnnxEmbeddingSpecTests(unittest.TestCase):
+    def test_model_and_dimension_are_checked_before_loading(self):
+        from policy_harvester.ai.onnx_embeddings import OnnxEmbeddingProvider
+
+        spec = OnnxEmbeddingProvider.spec("google/embeddinggemma-300m", 768)
+        self.assertEqual((spec.dimensions, spec.query_prefix), (768, "task: search result | query: "))
+        self.assertEqual(OnnxEmbeddingProvider.spec("google/embeddinggemma-300m", 256).dimensions, 768)
+        with self.assertRaises(ValueError):
+            OnnxEmbeddingProvider.spec("google/embeddinggemma-300m", 1536)
+        with self.assertRaises(ValueError):
+            OnnxEmbeddingProvider.spec("azure.text-embedding-3-small", 1536)
+
+
+class PdfRouteTests(unittest.TestCase):
+    def test_pages_take_text_picture_or_scan_routes(self):
+        import io
+
+        import pymupdf
+        from PIL import Image
+        from policy_harvester.documents.pdf_hybrid import PdfHybridParser
+
+        document = pymupdf.open()
+        page = document.new_page()
+        page.insert_text((72, 72), "Scholarship notice: apply by 2026-04-30 17:00.")
+        page = document.new_page()
+        page.insert_text((72, 72), "Poster below shows the amounts for each track.")
+        poster = io.BytesIO()
+        Image.new("RGB", (800, 600), "white").save(poster, "PNG")
+        page.insert_image(pymupdf.Rect(72, 100, 520, 440), stream=poster.getvalue())
+        document.new_page()  # no text layer: a scan
+        result = PdfHybridParser().parse(document.tobytes())
+        modes = {image.page_number: image.metadata["mode"] for image in result.images}
+        self.assertEqual(modes, {2: "page_supplement", 3: "page_full"})
+        supplement = next(image for image in result.images if image.page_number == 2)
+        self.assertIn("Poster below", supplement.metadata["page_text"])
+        self.assertIn("apply by 2026-04-30 17:00", result.text)
+        self.assertEqual(result.quality_flags, ("scanned_pages",))
+
+    def test_hwp_route_coverage_and_conversion(self):
+        import shutil
+
+        from policy_harvester.documents.hwp_pdf import line_coverage
+
+        self.assertEqual(line_coverage("장학금 신청 안내\n신청 기간: 4월 30일", "장학금신청안내 신청기간:4월30일"), 1.0)
+        self.assertEqual(line_coverage("장학금 신청 안내\n제출 서류 목록", "장학금 신청 안내"), 0.5)
+        if shutil.which("rhwp") is None:
+            self.skipTest("rhwp is not installed here")
+        from policy_harvester.documents.hwp_pdf import render_pdf
+        with self.assertRaises(Exception):
+            render_pdf(b"not an hwp file", "hwp")
+
+
 class LlmExchangeLogTests(unittest.TestCase):
     def test_calls_are_recorded_with_raw_request_and_error(self):
         import asyncio

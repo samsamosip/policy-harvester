@@ -388,7 +388,9 @@ async def document_view(document_id: uuid.UUID, request: Request, session: Sessi
                         admin: Viewer) -> HTMLResponse:
     document = (await session.execute(text("""
         SELECT d.*, nva.original_filename, nva.original_url, nva.binary_asset_id,
-               ba.detected_mime, ba.byte_size, ba.sha256, nv.notice_id, nv.title AS notice_title
+               ba.detected_mime, ba.byte_size, ba.sha256, nv.notice_id, nv.title AS notice_title,
+               (SELECT df.tool FROM inha_policy.derived_files df WHERE df.binary_asset_id=nva.binary_asset_id
+                  AND df.kind='pdf_render' ORDER BY df.created_at DESC LIMIT 1) AS rendered_pdf_tool
         FROM inha_policy.documents d
         JOIN inha_policy.notice_versions nv ON nv.id=d.notice_version_id
         LEFT JOIN inha_policy.notice_version_assets nva ON nva.id=d.asset_occurrence_id

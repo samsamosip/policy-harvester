@@ -47,6 +47,15 @@ class ParseResult:
     # Pictures to be transcribed by the multimodal LLM. Each one has a placeholder block
     # (kind "image", metadata["pending_image"] == key) marking where its text belongs.
     images: tuple["EmbeddedImage", ...] = ()
+    # Files derived from the source for display, e.g. the PDF rendering of an HWP document.
+    derived: tuple["DerivedFile", ...] = ()
+
+
+@dataclass(frozen=True)
+class DerivedFile:
+    kind: str  # "pdf_render"
+    data: bytes
+    tool: str  # "rhwp 0.8.7"
 
 
 @dataclass(frozen=True)
@@ -487,13 +496,21 @@ class ParserRegistry:
             XlsxParser(), PptxParser(),
         )
         self._parsers = {format_name: parser for parser in parsers for format_name in parser.formats}
+        self.pdf = PdfHybridParser()
+        self.hwp = HwpPdfParser({"hwp": self._parsers["hwp"], "hwpx": self._parsers["hwpx"]})
 
     def parse(self, payload: bytes, filename: str | None = None,
               detected: DetectedType | None = None) -> ParseResult:
         kind = detected or detect_type(payload, filename)
         if kind.format == "zip":
             return self._parse_archive(payload)
-        if kind.format in DoclingParser.formats:
+        if kind.format == "pdf":
+            return self._with_fallback(lambda: self.pdf.parse(payload, filename), kind.format,
+                                       payload, filename, "pdf_hybrid_failed")
+        if kind.format in HwpPdfParser.formats:
+            return self._with_fallback(lambda: self.hwp.parse(payload, filename, format_name=kind.format),
+                                       kind.format, payload, filename, "rhwp_failed")
+        if kind.format in DOCLING_ONLY:
             try:
                 return DoclingParser().parse(payload, filename, format_name=kind.format)
             except Exception as exc:  # noqa: BLE001 - damaged files fall back to the simple parser
@@ -507,10 +524,26 @@ class ParserRegistry:
             return ParseResult("unsupported", "1.0", "unsupported", (), "", (f"unsupported:{kind.format}",))
         return parser.parse(payload, filename)
 
+    def _with_fallback(self, parse, format_name: str, payload: bytes, filename: str | None,
+                       flag: str) -> ParseResult:
+        """The preferred route; on failure the direct parser, reported as partial."""
+        try:
+            return parse()
+        except Exception as exc:  # noqa: BLE001 - damaged files still get the simple parser
+            fallback = self._parsers[format_name].parse(payload, filename)
+            return ParseResult(fallback.parser_name, fallback.parser_version, "partial",
+                               fallback.blocks, fallback.text,
+                               (*fallback.quality_flags, f"{flag}:{exc.__class__.__name__}"),
+                               fallback.images)
+
     def identity(self, detected: DetectedType) -> tuple[str, str]:
         if detected.format == "zip":
             return "safe-zip-recursive", "1.1"
-        if detected.format in DoclingParser.formats:
+        if detected.format == "pdf":
+            return self.pdf.name, self.pdf.version
+        if detected.format in HwpPdfParser.formats:
+            return self.hwp.name, self.hwp.version
+        if detected.format in DOCLING_ONLY:
             return DoclingParser.name, DoclingParser.version
         parser = self._parsers.get(detected.format)
         if parser is None:
@@ -575,3 +608,7 @@ class ParserRegistry:
 
 
 from .docling_parser import DoclingParser  # noqa: E402 - imports the shared types above
+from .hwp_pdf import HwpPdfParser  # noqa: E402
+from .pdf_hybrid import PdfHybridParser  # noqa: E402
+
+DOCLING_ONLY = frozenset({"docx", "pptx", "xlsx"})

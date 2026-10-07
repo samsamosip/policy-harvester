@@ -1,5 +1,7 @@
 x-worker: &worker
   build: .
+  # CI-built image (ghcr.io/samsamosip/policy-harvester:latest) or a local build.
+  image: ${POLICY_IMAGE:-policy-harvester:local}
   env_file: .env
   volumes:
     - object-files:/data/objects
@@ -39,6 +41,8 @@ services:
 
   migrate:
     build: .
+    # CI-built image (ghcr.io/samsamosip/policy-harvester:latest) or a local build.
+    image: ${POLICY_IMAGE:-policy-harvester:local}
     command: alembic upgrade head
     env_file: .env
     depends_on:
@@ -47,6 +51,8 @@ services:
 
   api:
     build: .
+    # CI-built image (ghcr.io/samsamosip/policy-harvester:latest) or a local build.
+    image: ${POLICY_IMAGE:-policy-harvester:local}
     env_file: .env
     ports:
       - "8000:8000"
@@ -93,6 +99,8 @@ services:
 
   scheduler:
     build: .
+    # CI-built image (ghcr.io/samsamosip/policy-harvester:latest) or a local build.
+    image: ${POLICY_IMAGE:-policy-harvester:local}
     command: policy-worker schedule --forever
     env_file: .env
     volumes:

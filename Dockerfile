@@ -4,7 +4,7 @@ ENV PYTHONDONTWRITEBYTECODE=1 PYTHONUNBUFFERED=1
 WORKDIR /app
 
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    antiword curl libmagic1 libgl1 libglib2.0-0 libxcb1 && \
+    antiword curl libmagic1 libgl1 libglib2.0-0 libxcb1 fonts-nanum fonts-noto-cjk && \
     rm -rf /var/lib/apt/lists/*
 
 # CPU-only torch for Docling's layout/table models; the default wheel pulls CUDA.
@@ -28,6 +28,13 @@ PY
 ENV DOCLING_ARTIFACTS_PATH=/opt/docling-models HF_HUB_OFFLINE=1
 RUN HF_HUB_OFFLINE=0 docling-tools models download -o /opt/docling-models layout tableformer
 
+# rhwp renders HWP/HWPX to PDF (pinned, checksummed); it embeds the Korean fonts installed above.
+ENV RHWP_VERSION=0.8.7
+RUN curl -fsSL https://github.com/edwardkim/rhwp/releases/download/v0.8.7/rhwp-v0.8.7-linux-x86_64.tar.gz -o /tmp/rhwp.tgz && \
+    echo "24de2bdaa0b69f86302a27e7fdfb570ad3c53b0ab3a4eac06446adc651dfb988  /tmp/rhwp.tgz" | sha256sum -c - && \
+    tar -xzf /tmp/rhwp.tgz -C /tmp && install -m 0755 /tmp/rhwp/rhwp /usr/local/bin/rhwp && \
+    rm -rf /tmp/rhwp /tmp/rhwp.tgz
+
 # Swagger UI is served from the image (pinned, checksummed) so /docs needs no CDN and fits the CSP.
 ENV SWAGGER_UI_DIR=/opt/swagger-ui
 RUN curl -fsSL https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.33.1.tgz -o /tmp/swagger.tgz && \
@@ -39,6 +46,11 @@ RUN curl -fsSL https://registry.npmjs.org/swagger-ui-dist/-/swagger-ui-dist-5.33
 
 COPY src /app/src
 RUN pip install --no-cache-dir --no-deps .
+
+# Internal embedding models (ONNX, CPU) are baked in like the Docling models.
+ENV ONNX_MODELS_DIR=/opt/embedding-models
+RUN HF_HUB_OFFLINE=0 python -c "from policy_harvester.ai.onnx_embeddings import ONNX_MODELS, download; [download(spec) for spec in ONNX_MODELS.values()]" && \
+    rm -rf /opt/embedding-models/*/.cache
 
 COPY alembic.ini schema.sql /app/
 COPY migrations /app/migrations

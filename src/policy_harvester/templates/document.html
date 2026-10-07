@@ -1,7 +1,7 @@
 {% extends "base.html" %}{% block title %}{{ document.original_filename or '게시글 본문' }} · Policy Harvester{% endblock %}
 {% set mime = (document.detected_mime or '').split(';')[0] %}
 {% if document.origin_kind == 'html_body' %}{% set kind = 'html' %}
-{% elif mime == 'application/pdf' %}{% set kind = 'pdf' %}
+{% elif mime == 'application/pdf' or document.rendered_pdf_tool %}{% set kind = 'pdf' %}
 {% elif mime.startswith('image/') %}{% set kind = 'image' %}
 {% else %}{% set kind = 'download' %}{% endif %}
 {% block head %}<style>
@@ -33,7 +33,7 @@
 
 <div class="viewer">
   <section class="source" aria-label="원문">
-    <header><b>원문</b><span class="muted">{% if kind == 'html' %}수집 당시 게시글 HTML(스크립트 차단){% elif kind == 'pdf' %}PDF 원본{% elif kind == 'image' %}이미지 원본{% else %}브라우저에서 열 수 없는 형식{% endif %}</span></header>
+    <header><b>원문</b><span class="muted">{% if kind == 'html' %}수집 당시 게시글 HTML(스크립트 차단){% elif kind == 'pdf' and document.rendered_pdf_tool %}{{ document.original_filename.rsplit('.', 1)[-1]|upper if document.original_filename else 'HWP' }}를 PDF로 변환한 미리보기 ({{ document.rendered_pdf_tool }}) · <a href="/admin/assets/{{ document.binary_asset_id }}/download">원본 받기</a>{% elif kind == 'pdf' %}PDF 원본{% elif kind == 'image' %}이미지 원본{% else %}브라우저에서 열 수 없는 형식{% endif %}</span></header>
     {% if kind == 'html' %}<iframe name="source-frame" sandbox title="게시글 원문" src="/admin/documents/{{ document.id }}/source"></iframe>
     {% elif kind == 'pdf' %}<iframe name="source-frame" title="PDF 원문" src="/admin/assets/{{ document.binary_asset_id }}/view{% if highlight_page %}#page={{ highlight_page }}{% endif %}"></iframe>
     {% elif kind == 'image' %}<div class="img"><img src="/admin/assets/{{ document.binary_asset_id }}/view" alt="{{ document.original_filename or '본문 이미지' }} 원본"></div>

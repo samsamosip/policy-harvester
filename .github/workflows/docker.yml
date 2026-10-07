@@ -1,0 +1,115 @@
+# Builds the one image used by api, worker, scheduler and migrate, on Blacksmith runners.
+#
+# Every push, on any branch: build -> push ghcr.io/<owner>/<repo>:sha-<commit> -> run the unit
+# tests inside that image -> on main, only then point "latest" at it.
+#
+# Registry: GitHub Container Registry with the workflow's own GITHUB_TOKEN; no repository secrets.
+# The image is linux/amd64 only (CPU torch wheels, the rhwp x86_64 binary).
+name: Docker image
+
+on:
+  push:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  packages: write
+
+concurrency:
+  group: docker-${{ github.ref }}
+  # A newer push to the same branch replaces an unfinished build; main always finishes.
+  cancel-in-progress: ${{ github.ref != 'refs/heads/main' }}
+
+env:
+  IMAGE: ghcr.io/${{ github.repository }}
+
+jobs:
+  build:
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    outputs:
+      image: ${{ steps.ref.outputs.image }}
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Image reference
+        id: ref
+        run: |
+          # GHCR repository names must be lowercase.
+          image="$(echo "$IMAGE" | tr '[:upper:]' '[:lower:]'):sha-${GITHUB_SHA::12}"
+          echo "image=$image" >> "$GITHUB_OUTPUT"
+
+      - uses: useblacksmith/setup-docker-builder@v2
+        with:
+          cache-key: Dockerfile
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Labels
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+
+      - name: Build (and push the commit tag)
+        uses: useblacksmith/build-push-action@v2
+        with:
+          context: .
+          platforms: linux/amd64
+          push: true
+          tags: ${{ steps.ref.outputs.image }}
+          labels: ${{ steps.meta.outputs.labels }}
+
+  test:
+    needs: build
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Unit tests inside the built image
+        run: |
+          docker run --rm -v "$PWD:/workspace" -w /workspace \
+            -e PYTHONPATH=/workspace/src:/workspace -e PYTHONDONTWRITEBYTECODE=1 \
+            "${{ needs.build.outputs.image }}" python -m unittest discover -s tests -v
+
+  release:
+    needs: [build, test]
+    if: github.ref == 'refs/heads/main'
+    runs-on: blacksmith-2vcpu-ubuntu-2404
+    steps:
+      - name: Log in to GHCR
+        uses: docker/login-action@v3
+        with:
+          registry: ghcr.io
+          username: ${{ github.actor }}
+          password: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Release tags
+        id: meta
+        uses: docker/metadata-action@v5
+        with:
+          images: ${{ env.IMAGE }}
+          tags: |
+            type=raw,value=latest
+
+      - name: Point latest at the tested image
+        env:
+          TAGS: ${{ steps.meta.outputs.tags }}
+          SOURCE: ${{ needs.build.outputs.image }}
+        run: |
+          args=()
+          while IFS= read -r tag; do
+            [ -n "$tag" ] && args+=(-t "$(echo "$tag" | tr '[:upper:]' '[:lower:]')")
+          done <<< "$TAGS"
+          docker buildx imagetools create "${args[@]}" "$SOURCE"

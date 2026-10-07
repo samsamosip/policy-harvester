@@ -81,6 +81,19 @@ notice에는 LLM을 호출하지 않는다.
 
 `.env`를 바꾼 뒤 `docker compose up -d`로 반영한다. 일회성 명령은 `docker compose run --rm worker …`를 쓴다.
 
+### 이미지 빌드(CI)와 배포
+
+`.github/workflows/docker.yml`이 Blacksmith runner에서 이미지 하나(api·worker·scheduler·migrate 공용)를 만든다.
+
+- 모든 push(브랜치 무관): 빌드 → `ghcr.io/samsamosip/policy-harvester:sha-<커밋>` push → 그 이미지 안에서
+  단위 테스트 → main이면 통과 후 `latest`를 같은 이미지에 붙인다. 같은 브랜치에 새로 push하면 진행 중인
+  빌드는 취소된다(main 제외). runner는 Ubuntu 24.04, 플랫폼은 linux/amd64만(CPU torch, rhwp x86_64).
+- 레지스트리 인증은 workflow의 `GITHUB_TOKEN`(packages: write)이라 저장소 secret이 필요 없다. 필요한 것은
+  GitHub organization에 Blacksmith GitHub App 설치뿐이다.
+- 서버에서는 빌드하지 않고 받는다: `.env`에 `POLICY_IMAGE=ghcr.io/samsamosip/policy-harvester:latest`,
+  패키지가 비공개면 `docker login ghcr.io`(read:packages 권한 token) 후
+  `docker compose pull && docker compose up -d --no-build`.
+
 ### 백업·복원·초기화
 
 DB와 객체 저장소, `MASTER_KEY`가 한 recovery point다. DB만 복구되고 객체가 없으면 실패로 본다.
@@ -245,6 +258,21 @@ trigger와 같다. 자동 공개는 `complete`만, 수동 공개는 reviewer가 
    공개 시 변경 피드는 `extended`/`corrected`/`cancelled`.
 
 제목에 `[연장]`만 있고 새 값이 확인되지 않거나, 본문·첨부가 다른데 변경 지시가 없으면 현재 값을 바꾸지 않는다.
+
+### 검색과 임베딩
+
+- `GET /v1/opportunities?q=…`는 `search_mode`로 순위를 정한다: `hybrid`(기본, 어휘 0.45 + 의미 0.55),
+  `lexical`, `vector`. 응답 `query`에 해석된 필터, `vector_used`, `vector_error`가 나온다. 벡터를 못 쓰면
+  hybrid는 어휘 검색으로 내려가고 그 사실을 알리며, `vector`는 503이다.
+- 질의에서 학생 구분·지역(시·도 + "거주/사는/출신")·금액·소득 구간·"모집 중" 등을 필터로 해석한다. 지역·학생
+  구분 필터는 "지원할 수 있는가" 기준이라 제한이 없는 장학도 포함한다.
+- 임베딩 기본값은 내장 모델 EmbeddingGemma-300m(ONNX fp32, 768차원, CPU)이다. 한국어 검색어 120개 ×
+  공고 985건 평가에서 recall@10 0.79(e5-small 0.69, e5-large 0.72, 외부 text-embedding-3-small 0.48),
+  질의당 35ms. 모델은 이미지에 포함된다(`ONNX_MODELS_DIR`, Gemma 이용 약관). `EMBEDDING_PROVIDER`를
+  `openai_compatible` 등으로 두면 외부 API를 쓴다.
+- 임베딩 provider·모델·차원을 바꾸면 새 색인(profile)이 생기고 전체 재계산이 자동으로 큐에 들어간다
+  (공개는 하지 않음). 계산하는 동안 검색은 기존 색인을 쓰고, 다 끝나면 worker가 새 색인으로 바꾼다.
+  AI 설정 > 검색 색인에서 진행 상황을 보고 "임베딩 다시 계산"·"이 색인으로 전환"을 직접 할 수 있다.
 
 ### Public API
 

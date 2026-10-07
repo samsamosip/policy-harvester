@@ -29,7 +29,8 @@ from .crawling.service import CrawlService
 from .db import SessionFactory
 from .documents import DetectedType, ParserRegistry, detect_type
 from .documents.parsers import Block, ParseResult
-from .documents.vision import VISION_PROMPT, VISION_PROMPT_VERSION, merge_transcriptions, prepare_image
+from .documents.vision import (VISION_PAGE_PROMPT_VERSION, VISION_PROMPT, VISION_PROMPT_VERSION,
+                               merge_transcriptions, page_prompt, prepare_image)
 from .pipeline import LATEST_DOCUMENTS_SQL, OpportunityAssembler
 from .pipeline.identity import IdentityCandidateService
 from .ai.exchanges import persist_exchanges
@@ -43,6 +44,7 @@ WORKER_ID = f"{socket.gethostname()}:{os.getpid()}"
 STAGES = ("parse_document", "structure", "embed")
 BOILERPLATE_NOTICE_COUNT = 5
 HEARTBEAT_SECONDS = 60
+TRANSCRIPTION_CONCURRENCY = 4
 # Inputs this long are where single models dropped tracks in evaluation (about 11% of notices).
 CROSSCHECK_MIN_INPUT_CHARS = 20_000
 
@@ -53,6 +55,7 @@ class ExtractionOutcome:
     bundle: ExtractionBundleV2
     validation_errors: list[str]
     model: str
+    reused: bool = False  # taken from a sealed run of the same input, no model call
 
 
 def needs_crosscheck(blocks: dict[str, str], bundle: ExtractionBundleV2) -> bool:
@@ -309,7 +312,8 @@ class Worker:
         vision_model = config["llm.model"]["value"]
         config_hash = hashlib.sha256(json.dumps(
             {"detected": detected.format, "vision_model": vision_model,
-             "vision_prompt": VISION_PROMPT_VERSION}, sort_keys=True).encode()).hexdigest()
+             "vision_prompt": VISION_PROMPT_VERSION, "page_prompt": VISION_PAGE_PROMPT_VERSION},
+            sort_keys=True).encode()).hexdigest()
         parser_name, parser_version = self.parsers.identity(detected)
         if origin == "asset":
             cached = (await session.execute(text("""
@@ -391,6 +395,16 @@ class Worker:
                  "origin": origin, "name": result.parser_name, "parser_version": result.parser_version,
                  "config": config_hash, "attempt": attempt, "status": result.status,
                  "parsed_text": _db_text(result.text), "flags": list(result.quality_flags), "now": now})
+        if origin == "asset":
+            for derived in result.derived:
+                stored = self.store.put(derived.data)
+                await session.execute(text("""
+                    INSERT INTO inha_policy.derived_files
+                      (binary_asset_id, kind, tool, storage_key, sha256, byte_size)
+                    VALUES (:asset, :kind, :tool, :key, :sha, :size)
+                    ON CONFLICT (binary_asset_id, kind, tool) DO NOTHING
+                """), {"asset": source["binary_asset_id"], "kind": derived.kind, "tool": derived.tool,
+                         "key": stored.storage_key, "sha": stored.sha256, "size": stored.byte_size})
         for index, block in enumerate(result.blocks):
             block_id = uuid.uuid5(document_id, block.stable_key)
             await session.execute(text("""
@@ -418,20 +432,27 @@ class Worker:
         """
         if not result.images:
             return result
-        registry = ProviderRegistry(await resolved_settings(session))
-        transcriptions: dict[str, str | None] = {}
-        for image in result.images:
+        provider = ProviderRegistry(await resolved_settings(session)).llm(provider_name)
+        semaphore = asyncio.Semaphore(TRANSCRIPTION_CONCURRENCY)
+
+        async def transcribe(image: Any) -> tuple[str, str | None]:
             prepared = prepare_image(image.data)
             if prepared is None:
-                transcriptions[image.key] = None
-                continue
-            digest = hashlib.sha256(prepared).hexdigest()
-            cache_key = (digest, model, VISION_PROMPT_VERSION)
+                return image.key, None
+            if image.metadata.get("mode") == "page_supplement":
+                prompt, version = page_prompt(image.metadata.get("page_text", "")), VISION_PAGE_PROMPT_VERSION
+            else:
+                prompt, version = VISION_PROMPT, VISION_PROMPT_VERSION
+            cache_key = (hashlib.sha256(prepared).hexdigest(), model, version)
             if cache_key not in self.transcription_cache:
-                response = await registry.llm(provider_name).transcribe_image(
-                    model=model, image=prepared, mime="image/jpeg", prompt=VISION_PROMPT)
+                async with semaphore:
+                    response = await provider.transcribe_image(
+                        model=model, image=prepared, mime="image/jpeg", prompt=prompt)
                 self.transcription_cache[cache_key] = response.text
-            transcriptions[image.key] = self.transcription_cache[cache_key]
+            return image.key, self.transcription_cache[cache_key]
+
+        # Calls within one document run side by side; a failure still fails the job (retried).
+        transcriptions = dict(await asyncio.gather(*(transcribe(image) for image in result.images)))
         return merge_transcriptions(result, transcriptions, model)
 
     async def _enqueue_structure_if_ready(self, session: AsyncSession, job: dict[str, Any]) -> None:
@@ -486,14 +507,17 @@ class Worker:
             outcome = await self._extract(session, crosscheck, *context)
         else:
             if crosscheck is not None and needs_crosscheck(blocks, outcome.bundle):
-                outcome = await self._crosscheck(session, outcome, crosscheck, context)
+                # Re-assembling a sealed result (split, retry) must reach the same decision without
+                # calling a model, so the cross-check then comes from its sealed run or not at all.
+                outcome = await self._crosscheck(session, outcome, crosscheck, context,
+                                                 cache_only=outcome.reused)
         title = (await session.execute(text(
             "SELECT title FROM inha_policy.notice_versions WHERE id=:id"
         ), {"id": job["notice_version_id"]})).scalar_one()
         title_id = next((key for key, value in blocks.items() if value.strip() == title.strip()), None)
         if title_id is not None:  # older parses have no title block to quote
             outcome = ExtractionOutcome(outcome.run_id, with_title_revision(outcome.bundle, title_id, title),
-                                        outcome.validation_errors, outcome.model)
+                                        outcome.validation_errors, outcome.model, outcome.reused)
         assembler = OpportunityAssembler(session)
         forced = job["payload"].get("forced_opportunity_id")
         decision = job["payload"].get("identity_decision_id")
@@ -508,14 +532,17 @@ class Worker:
             await IdentityCandidateService(session).propose_for_versions(version_ids)
 
     async def _crosscheck(self, session: AsyncSession, first: "ExtractionOutcome",
-                          target: ExtractionTarget, context: tuple) -> "ExtractionOutcome":
+                          target: ExtractionTarget, context: tuple,
+                          cache_only: bool = False) -> "ExtractionOutcome":
         """Run the second model and keep the result with more opportunities.
 
         Models mostly fail on multi-track notices by dropping tracks, so the larger result is kept,
         and any disagreement in the number of tracks sends every resulting version to review.
         """
         try:
-            second = await self._extract(session, target, *context)
+            second = await self._extract(session, target, *context, cache_only=cache_only)
+        except LookupError:
+            return first
         except Exception as exc:
             logger.warning("cross-check with %s failed: %s", target.model, exc.__class__.__name__)
             return first
@@ -526,11 +553,11 @@ class Worker:
         note = (f"crosscheck_disagreement: {first.model} found {counts[0]} item(s), "
                 f"{second.model} found {counts[1]}; kept {chosen.model}")
         bundle = chosen.bundle.model_copy(update={"warnings": [*chosen.bundle.warnings, note]})
-        return ExtractionOutcome(chosen.run_id, bundle, chosen.validation_errors, chosen.model)
+        return ExtractionOutcome(chosen.run_id, bundle, chosen.validation_errors, chosen.model, chosen.reused)
 
     async def _extract(self, session: AsyncSession, target: ExtractionTarget, job: dict[str, Any],
                        blocks: dict[str, str], missing: list[uuid.UUID], manifest: dict[str, Any],
-                       input_hash: str) -> "ExtractionOutcome":
+                       input_hash: str, cache_only: bool = False) -> "ExtractionOutcome":
         """One model's extraction run: reuse a sealed run of the same input, else call the model.
 
         The prompt names blocks "b1", "b2", ... in manifest order; stored outputs use block ids.
@@ -553,7 +580,9 @@ class Worker:
         """), keys)).mappings().one_or_none()
         if cached:
             return ExtractionOutcome(cached["id"], ExtractionBundleV2.model_validate(cached["parsed_output"]),
-                                     list(cached["validation_errors"] or []), target.model)
+                                     list(cached["validation_errors"] or []), target.model, reused=True)
+        if cache_only:
+            raise LookupError(f"no sealed {target.model} extraction for this input")
         extraction_id = uuid.uuid4()
         self.current_extraction_run_id = extraction_id
         log = EXCHANGE_LOG.get()

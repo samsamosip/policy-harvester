@@ -33,22 +33,15 @@ class OnnxModelSpec:
     license: str = ""
 
 
+# The one internal model. Measured on 120 Korean queries over 985 notices (CPU, AVX2), EmbeddingGemma
+# fp32 had the best recall@10 (0.79; multilingual-e5-small 0.69, e5-large 0.72, the external
+# text-embedding-3-small 0.48) at 35 ms per query. Its int8 build matched it in quality but was
+# 6x slower per query without AVX-512 VNNI. Other ONNX models fit by adding a spec here.
 ONNX_MODELS: dict[str, OnnxModelSpec] = {
-    "intfloat/multilingual-e5-small": OnnxModelSpec(
-        "intfloat/multilingual-e5-small", "onnx/model.onnx", "onnx/tokenizer.json", 384, "mean",
-        "query: ", "passage: ", license="MIT"),
-    "intfloat/multilingual-e5-large": OnnxModelSpec(
-        "qdrant/multilingual-e5-large-onnx", "model.onnx", "tokenizer.json", 1024, "mean",
-        "query: ", "passage: ", extra_files=("model.onnx_data",), license="MIT"),
     "google/embeddinggemma-300m": OnnxModelSpec(
         "onnx-community/embeddinggemma-300m-ONNX", "onnx/model.onnx", "tokenizer.json", 768,
         "sentence_embedding", "task: search result | query: ", "title: none | text: ",
         max_tokens=1024, extra_files=("onnx/model.onnx_data",), truncatable_to=(512, 256, 128),
-        license="Gemma Terms of Use"),
-    "google/embeddinggemma-300m-q8": OnnxModelSpec(
-        "onnx-community/embeddinggemma-300m-ONNX", "onnx/model_quantized.onnx", "tokenizer.json", 768,
-        "sentence_embedding", "task: search result | query: ", "title: none | text: ",
-        max_tokens=1024, extra_files=("onnx/model_quantized.onnx_data",), truncatable_to=(512, 256, 128),
         license="Gemma Terms of Use"),
 }
 
@@ -124,10 +117,19 @@ class OnnxEmbeddingProvider:
         self.threads = getattr(settings, "onnx_threads", None) or os.cpu_count() or 4
         self.batch_size = 16
 
-    def _model(self, model: str) -> _LoadedModel:
+    @staticmethod
+    def spec(model: str, dimensions: int) -> OnnxModelSpec:
+        """The model's spec, after checking the settings ask for something it can produce."""
         spec = ONNX_MODELS.get(model)
         if spec is None:
             raise ValueError(f"unknown ONNX embedding model {model!r}; known: {', '.join(ONNX_MODELS)}")
+        if dimensions != spec.dimensions and dimensions not in spec.truncatable_to:
+            raise ValueError(f"{model} gives {spec.dimensions} dimensions"
+                             + (f" (or {spec.truncatable_to})" if spec.truncatable_to else ""))
+        return spec
+
+    def _model(self, model: str) -> _LoadedModel:
+        spec = ONNX_MODELS[model]
         with self._guard:
             if model not in self._models:
                 self._models[model] = _LoadedModel(spec, self.threads)
@@ -137,11 +139,8 @@ class OnnxEmbeddingProvider:
                     kind: EmbeddingKind = "document") -> list[list[float]]:
         import numpy as np
 
+        spec = self.spec(model, dimensions)
         loaded = await asyncio.to_thread(self._model, model)
-        spec = loaded.spec
-        if dimensions != spec.dimensions and dimensions not in spec.truncatable_to:
-            raise ValueError(f"{model} gives {spec.dimensions} dimensions"
-                             + (f" (or {spec.truncatable_to})" if spec.truncatable_to else ""))
         prefix = spec.query_prefix if kind == "query" else spec.document_prefix
         prepared = [prefix + text for text in texts]
         batches = [prepared[index:index + self.batch_size]
