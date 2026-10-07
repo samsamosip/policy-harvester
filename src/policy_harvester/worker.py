@@ -283,7 +283,9 @@ class Worker:
               SELECT id FROM inha_policy.crawl_jobs
               WHERE status IN ('queued', 'retry') AND available_at <= now()
                 AND stage = ANY(:stages)
-              ORDER BY available_at, created_at FOR UPDATE SKIP LOCKED LIMIT 1
+              -- AI reviews take seconds and hold items back from people: never queue them behind
+              -- hours of extraction backlog.
+              ORDER BY stage <> 'review', available_at, created_at FOR UPDATE SKIP LOCKED LIMIT 1
             )
             UPDATE inha_policy.crawl_jobs j SET status='running', worker_id=:worker,
               locked_at=now(), heartbeat_at=now(), started_at=coalesce(started_at, now()),
