@@ -1,51 +1,62 @@
 {% extends "base.html" %}{% block title %}AI 설정 · Policy Harvester{% endblock %}
 {% macro control(key, item, spec) -%}
 <form class="inline" method="post" action="/admin/settings"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ key }}">
-  {% if spec.kind == 'choice' %}<select name="value" aria-label="{{ spec.label }}"><option value="">덮어쓰지 않음</option>{% for choice in spec.choices %}<option value="{{ choice }}"{% if item.source == 'admin_override' and item.value == choice %} selected{% endif %}>{{ (spec.labels or {}).get(choice, choice) }}</option>{% endfor %}</select>
-  {% elif spec.kind == 'bool' %}<select name="value" aria-label="{{ spec.label }}"><option value="">덮어쓰지 않음</option><option value="true"{% if item.source == 'admin_override' and item.value %} selected{% endif %}>켜기</option><option value="false"{% if item.source == 'admin_override' and not item.value %} selected{% endif %}>끄기</option></select>
+  {% if spec.kind == 'choice' %}<select name="value" aria-label="{{ spec.label }}"><option value="">기본값 사용 (.env)</option>{% for choice in spec.choices %}<option value="{{ choice }}"{% if item.source == 'admin_override' and item.value == choice %} selected{% endif %}>{{ (spec.labels or {}).get(choice, choice) }}</option>{% endfor %}</select>
+  {% elif spec.kind == 'bool' %}<select name="value" aria-label="{{ spec.label }}"><option value="">기본값 사용 (.env)</option><option value="true"{% if item.source == 'admin_override' and item.value %} selected{% endif %}>켜기</option><option value="false"{% if item.source == 'admin_override' and not item.value %} selected{% endif %}>끄기</option></select>
   {% elif spec.kind == 'number' %}<input type="number" name="value" min="{{ spec.min }}" max="{{ spec.max }}" step="{{ spec.step }}" value="{{ item.value if item.source == 'admin_override' else '' }}" placeholder="{{ item.value if item.value is not none else '' }}" aria-label="{{ spec.label }}" style="width:130px">
   {% else %}<input {% if spec.kind == 'url' %}type="url" {% endif %}{% if spec.suggest %}list="{{ spec.suggest }}" {% endif %}name="value" value="{{ item.value if item.source == 'admin_override' and item.value else '' }}" placeholder="{{ item.value if item.value is not none else '' }}" aria-label="{{ spec.label }}" style="min-width:320px">{% endif %}
   <button>저장</button></form>
 {%- endmacro %}
 {% block content %}
 <div class="page-head"><div><h1>AI 설정</h1>
-  <p class="lede">용도별로 provider, endpoint, 모델, API key를 정합니다. 값을 저장하면 .env 대신 이 값을 쓰고,
-    <b>비우고 저장</b>하거나 .env와 같은 값을 저장하면 덮어쓰기가 지워져 .env 값(없으면 기본값)으로 돌아갑니다.
-    endpoint를 바꾸면 그 묶음의 API key가 새 주소로 전송되니 주의하세요.</p></div></div>
+  <p class="lede">용도별로 쓸 AI 서비스(API 종류·주소·모델·API key)를 정합니다. 여기서 저장한 값은 서버 설정 파일(.env)보다 우선하고, 다음 작업부터 적용됩니다.
+    값을 <b>비우고 저장</b>하거나 .env와 같은 값을 저장하면 관리자 설정이 지워져 .env 값(없으면 기본값)으로 돌아갑니다.
+    API 주소를 바꾸면 그 묶음의 API key가 새 주소로 전송되니 믿을 수 있는 주소인지 확인하세요.</p></div></div>
 {% for group, title, description in groups %}
 <h2>{{ title }}</h2>{% if description %}<p class="muted small" style="margin:-4px 0 10px">{{ description }}</p>{% endif %}
-<div class="table-wrap"><table><thead><tr><th style="width:22%">항목</th><th style="width:30%">적용 중인 값</th><th style="width:10%">출처</th><th>변경</th></tr></thead><tbody>
+<div class="table-wrap"><table><thead><tr><th style="width:22%">항목</th><th style="width:30%">지금 쓰는 값</th><th style="width:10%">어디서 온 값</th><th>바꾸기</th></tr></thead><tbody>
 {% for key, item in effective.items() if inputs.get(key, {}).get('group', key.split('.')[0]) == group %}{% set spec = inputs.get(key, {'label': key, 'kind': 'text'}) %}
 <tr><td><div class="title">{{ spec.label }}</div><code class="small">{{ key }}</code></td>
-  <td style="overflow-wrap:anywhere">{% if spec.kind == 'bool' %}{{ '켜짐' if item.value else '꺼짐' }}{% elif item.value is none or item.value == '' %}<span class="muted">{{ '(LLM 설정 사용)' if group == 'extraction' else '없음' }}</span>{% else %}{{ item.value }}{% endif %}</td>
-  <td><span class="chip {{ 'brand' if item.source == 'admin_override' else '' }}">{{ {'admin_override': '관리자 설정', 'environment': '.env', 'application_default': '기본값'}.get(item.source, item.source) }}</span></td>
+  <td style="overflow-wrap:anywhere">{% if spec.kind == 'bool' %}{{ '켜짐' if item.value else '꺼짐' }}{% elif item.value is none or item.value == '' %}<span class="muted">{{ '(기본 AI 설정 사용)' if group == 'extraction' else ('(꺼짐)' if key == 'review.model' else '없음') }}</span>{% else %}{{ (spec.labels or {}).get(item.value, item.value) }}{% endif %}</td>
+  <td><span class="chip {{ 'brand' if item.source == 'admin_override' else '' }}" title="{{ item.source }}">{{ {'admin_override': '관리자 설정', 'environment': '.env', 'application_default': '기본값'}.get(item.source, item.source) }}</span></td>
   <td>{{ control(key, item, spec) }}</td></tr>
 {% endfor %}
 {% set secret = secrets.get(group) %}{% if secret %}
 <tr><td><div class="title">API key</div><code class="small">{{ secret.key }}</code></td>
   <td class="mono">{{ secret.masked or '—' }}</td>
-  <td><span class="chip {{ {'admin': 'brand', 'missing': 'bad'}.get(secret.source, '') }}">{{ {'admin': '관리자 설정', 'environment': '.env', 'fallback': 'LLM key 공유', 'missing': '없음'}[secret.source] }}</span>{% if secret.updated_at %}<div class="muted small num">{{ secret.updated_at|kst }}</div>{% endif %}</td>
+  <td><span class="chip {{ {'admin': 'brand', 'missing': 'bad'}.get(secret.source, '') }}">{{ {'admin': '관리자 설정', 'environment': '.env', 'fallback': '기본 AI key 공유', 'missing': '없음'}[secret.source] }}</span>{% if secret.updated_at %}<div class="muted small num">{{ secret.updated_at|kst }}</div>{% endif %}</td>
   <td><form class="inline" method="post" action="/admin/secrets"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="key" value="{{ secret.key }}">
-    <input type="password" name="value" autocomplete="new-password" placeholder="새 key (비우면 .env 사용)" aria-label="{{ title }} API key" style="min-width:320px"><button>저장</button></form></td></tr>
+    <input type="password" name="value" autocomplete="new-password" placeholder="새 key 입력 (비우고 저장하면 .env key 사용)" aria-label="{{ title }} API key" style="min-width:320px"><button>저장</button></form></td></tr>
 {% endif %}
 </tbody></table></div>
 {% if group == 'embedding' %}{% set st = embedding_status %}
 <section class="panel" id="embedding" style="margin-top:12px">
   <h2>검색 색인</h2>
   <dl class="kv">
-    <dt>검색에 쓰는 색인</dt><dd>{% if st.active %}<code>{{ st.active.profile_key }}</code>{% else %}<span class="bad">없음 — 의미(벡터) 검색이 꺼져 있습니다</span>{% endif %}</dd>
-    <dt>지금 설정의 색인</dt><dd><code>{{ st.wanted_key }}</code>{% if st.current and st.current.is_active %} <span class="chip ok">사용 중</span>{% elif not st.current %} <span class="chip">아직 없음</span>{% endif %}</dd>
-    {% if st.coverage %}<dt>계산된 장학</dt><dd class="num">{{ st.coverage.embedded }} / {{ st.coverage.total }}{% if st.coverage.queued %} · 대기 중 작업 {{ st.coverage.queued }}건{% endif %}</dd>{% endif %}
+    <dt>지금 검색에 쓰는 색인</dt><dd>{% if st.active %}<code>{{ st.active.profile_key }}</code>{% else %}<span class="bad">없음 — 의미(벡터) 검색이 꺼져 있고 글자 일치로만 검색합니다</span>{% endif %}</dd>
+    <dt>지금 설정으로 만들 색인</dt><dd><code>{{ st.wanted_key }}</code>{% if st.current and st.current.is_active %} <span class="chip ok">검색에 사용 중</span>{% elif not st.current %} <span class="chip">아직 없음</span>{% else %} <span class="chip warn">만드는 중 · 아직 검색에 안 씀</span>{% endif %}</dd>
+    {% if st.coverage %}<dt>색인이 만들어진 장학</dt><dd class="num">{{ st.coverage.embedded }} / {{ st.coverage.total }}{% if st.coverage.queued %} · 작업 큐 대기 {{ st.coverage.queued }}건 (<a href="/admin/table/jobs?stage=embed">작업 큐 보기</a>){% endif %}</dd>{% endif %}
   </dl>
-  <p class="small muted">모델·차원을 바꾸면 새 색인을 만들어야 합니다. "다시 계산"은 빠진 장학만 작업 큐에 넣고(공개는 하지 않음), worker가 처리합니다.
-    다 계산되면 "이 색인으로 전환"으로 검색을 옮깁니다. 내장(onnx) 모델: {% for name, spec in st.onnx_models.items() %}<code>{{ name }}</code> ({{ spec.dimensions }}차원{% if spec.truncatable_to %}, {{ spec.truncatable_to|join('/') }}로 줄일 수 있음{% endif %}){% if not loop.last %}, {% endif %}{% endfor %}</p>
-  <form method="post" action="/admin/embeddings/recompute"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="사유 (선택)"><button>임베딩 다시 계산</button></form>
-  {% if st.current and not st.current.is_active %}<form method="post" action="/admin/embedding-profiles/{{ st.current.id }}/activate"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/admin/settings#embedding"><input name="reason" placeholder="사유 (선택)"><button class="secondary"{% if st.coverage and st.coverage.embedded < st.coverage.total %} title="아직 계산되지 않은 장학이 있습니다"{% endif %}>이 색인으로 전환</button></form>{% endif %}
+  <p class="small muted">모델이나 차원을 바꾸면 새 색인을 만들어야 하며, 저장하면 필요한 임베딩 작업이 자동으로 작업 큐에 들어갑니다(공개는 하지 않음).
+    빠진 장학만 다시 넣으려면 "임베딩 다시 계산"을 누르세요. 모두 계산되면 "이 색인으로 전환"으로 검색을 옮깁니다. 그 전까지 검색은 이전 색인을 계속 씁니다.
+    내장(onnx) 모델: {% for name, spec in st.onnx_models.items() %}<code>{{ name }}</code> ({{ spec.dimensions }}차원{% if spec.truncatable_to %}, {{ spec.truncatable_to|join('/') }}로 줄일 수 있음{% endif %}){% if not loop.last %}, {% endif %}{% endfor %}</p>
+  <form method="post" action="/admin/embeddings/recompute"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="사유 (선택)" aria-label="사유"><button>임베딩 다시 계산</button></form>
+  {% if st.current and not st.current.is_active %}{% set incomplete = st.coverage and st.coverage.embedded < st.coverage.total %}
+  <form method="post" action="/admin/embedding-profiles/{{ st.current.id }}/activate"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="/admin/settings"><input name="reason" placeholder="사유 (선택)" aria-label="사유"><button class="secondary">이 색인으로 전환</button>{% if incomplete %}<span class="small muted">아직 {{ st.coverage.total - st.coverage.embedded }}건이 남아 있어 지금은 전환되지 않습니다.</span>{% endif %}</form>{% endif %}
 </section>
 <datalist id="onnx_models">{% for name in st.onnx_models %}<option value="{{ name }}">{% endfor %}</datalist>
 {% endif %}
 {% endfor %}
-<h2>연결 확인</h2>
-<section class="panel"><form method="post" action="/admin/settings/test/llm"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">LLM 연결 테스트</button></form>
-  <form method="post" action="/admin/settings/test/embedding"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">Embedding 연결 테스트</button></form></section>
+<h2 id="test">연결 확인</h2>
+<section class="panel">
+  <p class="small muted" style="margin:0">지금 설정으로 AI 서비스에 짧은 요청을 보내 봅니다. 설정이나 API key를 바꾼 뒤에 눌러 보세요.</p>
+  {% for capability, text in [('llm', '기본 AI'), ('embedding', '임베딩')] %}{% set test = tests.get(capability) %}
+  <form method="post" action="/admin/settings/test/{{ capability }}"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary">{{ text }} 연결 확인</button>
+    {% if test %}{% set result = test.after_state or {} %}<span class="small">마지막 확인 {{ test.created_at|kst }} ·
+      {% if result.ok %}<span class="chip ok">성공</span> <span class="muted">{{ result.model }}{% if result.dimensions %} · {{ result.dimensions }}차원{% endif %}</span>
+      {% else %}{% set help = error_help(result.error_code, result.error) %}<span class="chip bad">실패</span> <b>{{ help.summary }}</b> — {{ help.action }}
+        <details><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ result.error_code }}: {{ result.error }}</pre></details>{% endif %}</span>
+    {% else %}<span class="small muted">아직 확인한 적이 없습니다.</span>{% endif %}
+  </form>{% endfor %}
+</section>
 {% endblock %}

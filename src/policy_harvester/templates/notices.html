@@ -2,7 +2,7 @@
 {% macro link(scope_value=None, stage_value=None, page_value=None) %}?scope={{ scope if scope_value is none else scope_value }}&stage={{ stage if stage_value is none else stage_value }}{% if q %}&q={{ q|urlencode }}{% endif %}{% if page_value %}&page={{ page_value }}{% endif %}{% endmacro %}
 {% block content %}
 <div class="page-head">
-  <div><h1>공고 목록</h1><p class="lede">인하대 장학 게시판에서 수집한 게시글입니다. 게시글마다 첨부 파싱, AI 추출, 생성된 장학 수를 보여줍니다.</p></div>
+  <div><h1>공고 목록</h1><p class="lede">인하대 장학 게시판에서 수집한 공고입니다. 공고마다 본문·첨부 파싱, AI 추출 상태와 거기서 나온 장학 수를 보여 줍니다. 제목을 누르면 처리 과정과 오류를 자세히 봅니다.</p></div>
   <div class="muted num">{{ total }}건</div>
 </div>
 <div class="tabs" aria-label="처리 단계">
@@ -11,17 +11,18 @@
 </div>
 <form class="filters" method="get">
   <input type="hidden" name="stage" value="{{ stage }}">
-  <input id="q" name="q" value="{{ q }}" placeholder="게시글 제목 검색" size="30" aria-label="검색어">
+  <input id="q" name="q" value="{{ q }}" placeholder="공고 제목 검색" size="30" aria-label="검색어">
   <select id="scope" name="scope" aria-label="수집 범위">
     <option value="included" {% if scope == 'included' %}selected{% endif %}>장학 분류</option>
     <option value="excluded" {% if scope == 'excluded' %}selected{% endif %}>범위 밖</option>
+    <option value="uncertain" {% if scope == 'uncertain' %}selected{% endif %}>범위 판단 보류</option>
     <option value="all" {% if scope == 'all' %}selected{% endif %}>전체</option>
   </select>
   <button>적용</button>
 </form>
 {% if rows %}
 <div class="table-wrap"><table>
-  <thead><tr><th>게시글</th><th>게시일</th><th>첨부</th><th>파싱</th><th>AI 추출</th><th>장학</th></tr></thead>
+  <thead><tr><th>공고</th><th>게시일</th><th>첨부</th><th>파싱</th><th>AI 추출</th><th>장학</th></tr></thead>
   <tbody>
   {% for row in rows %}
   <tr>
@@ -29,13 +30,13 @@
       <div class="sub">{{ row.category_name or '' }}{% if row.scope_status != 'included' %} · <span class="chip">범위 밖</span>{% endif %}{% if row.revision_no > 1 %} · 수정 {{ row.revision_no - 1 }}회{% endif %} · <a href="{{ row.canonical_url }}" rel="noreferrer">원문 ↗</a></div></td>
     <td class="num" style="white-space:nowrap">{{ row.published_on or '' }}</td>
     <td class="num">{{ row.attachments }}</td>
-    <td style="white-space:nowrap">{% if row.failed %}<span class="chip bad">실패 {{ row.failed }}</span>{% elif row.pending %}<span class="chip info">대기 {{ row.pending }}</span>{% else %}<span class="chip ok">완료</span>{% endif %}</td>
-    <td style="white-space:nowrap">{% if row.scope_status != 'included' %}<span class="muted small">대상 아님</span>{% elif row.extraction_status == 'succeeded' %}<span class="chip ok">완료</span>{% elif row.extraction_status == 'failed' %}<span class="chip bad">실패</span>{% elif row.extraction_status == 'running' %}<span class="chip info">실행 중</span>{% else %}<span class="chip">대기</span>{% endif %}</td>
+    <td style="white-space:nowrap">{% if row.failed %}<a href="/admin/notices/{{ row.id }}#jobs"><span class="chip bad">실패 {{ row.failed }}</span></a>{% elif row.pending %}<span class="chip info">진행 중 {{ row.pending }}</span>{% else %}<span class="chip ok">완료</span>{% endif %}</td>
+    <td style="white-space:nowrap">{% if row.scope_status != 'included' %}<span class="muted small">대상 아님</span>{% elif row.extraction_status == 'succeeded' %}<span class="chip ok">완료</span>{% elif row.extraction_status == 'failed' %}<a href="/admin/notices/{{ row.id }}#runs"><span class="chip bad">실패</span></a>{% elif row.extraction_status == 'running' %}<span class="chip info">실행 중</span>{% else %}<span class="chip">대기</span>{% endif %}</td>
     <td class="num">{% if row.opportunities %}<a href="/admin/notices/{{ row.id }}#opportunities">{{ row.opportunities }}개</a>{% else %}<span class="muted">—</span>{% endif %}</td>
   </tr>
   {% endfor %}
   </tbody>
 </table></div>
 <div class="pager num">{% if page > 1 %}<a href="{{ link(page_value=page - 1) }}">← 이전</a>{% endif %}<span>{{ page }} / {{ pages }}</span>{% if page < pages %}<a href="{{ link(page_value=page + 1) }}">다음 →</a>{% endif %}</div>
-{% else %}<div class="panel empty">조건에 맞는 게시글이 없습니다.</div>{% endif %}
+{% else %}<div class="panel empty">조건에 맞는 공고가 없습니다.{% if q or stage %} <a href="?scope={{ scope }}">조건 지우기</a>{% endif %}</div>{% endif %}
 {% endblock %}

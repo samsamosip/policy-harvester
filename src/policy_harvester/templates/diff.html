@@ -1,2 +1,5 @@
-{% extends "base.html" %}{% block title %}Diff · Policy Harvester{% endblock %}
-{% block content %}<div class="page-head"><div><h1>{{ title }}</h1><p class="lede">version 변경 비교: {{ labels[0] }} → {{ labels[1] }}</p></div></div><pre class="panel" style="white-space:pre-wrap;overflow:auto">{{ diff }}</pre>{% endblock %}
+{% extends "base.html" %}{% block title %}{{ title }} · 비교 · Policy Harvester{% endblock %}
+{% block content %}<div class="page-head"><div>{% if back %}<div class="crumbs"><a href="{{ back }}">← 돌아가기</a></div>{% endif %}<h1>{{ title }}</h1>
+  <p class="lede">{{ lede or "이전 버전과 비교합니다. '-'로 시작하는 줄은 이전에만, '+'로 시작하는 줄은 새 버전에만 있는 내용입니다." }}</p>
+  <p class="small muted">{{ labels[0] }} → {{ labels[1] }}</p></div></div>
+<pre class="panel" style="white-space:pre-wrap;overflow:auto">{{ diff }}</pre>{% endblock %}

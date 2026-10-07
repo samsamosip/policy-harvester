@@ -23,14 +23,16 @@
     <div class="crumbs"><a href="/admin/opportunities">장학 목록</a> / {{ version.provider_name or '기관 미상' }}</div>
     <h1>{{ version.title }}</h1>
     <p class="lede">
-      {% if opportunity.current_version_id %}<span class="chip ok">공개 중</span>{% else %}<span class="chip">공개 전</span>{% endif %}
-      {% if version.data_quality_status == 'complete' %}<span class="chip ok">완전</span>{% elif version.data_quality_status == 'partial' %}<span class="chip warn">일부 불완전</span>{% else %}<span class="chip bad">검토 필요</span>{% endif %}
-      {% if opportunity.lifecycle_status != 'active' %}<span class="chip">{{ opportunity.lifecycle_status }}</span>{% endif %}
-      <span class="muted small">v{{ version.version_no }} ({{ version.edit_kind }}) · {{ version.created_at.strftime('%Y-%m-%d %H:%M') }}</span>
+      {% if opportunity.current_version_id == version.id %}<span class="chip ok">이 버전 공개 중</span>{% elif opportunity.current_version_id %}<span class="chip ok">다른 버전 공개 중</span>{% elif version.publication_state == 'published' %}<span class="chip">비공개로 전환됨</span>{% else %}<span class="chip">공개 전</span>{% endif %}
+      {{ chip('quality', version.data_quality_status) }}
+      {% if opportunity.lifecycle_status != 'active' %}{{ chip('lifecycle', opportunity.lifecycle_status) }}{% endif %}
+      <span class="muted small">버전 {{ version.version_no }} ({{ label('edit_kind', version.edit_kind) }}) · {{ version.created_at|kst }}</span>
     </p>
-    {% if version.quality_flags %}<p class="small muted" style="margin:4px 0 0">품질 메모: {{ version.quality_flags|join(' · ') }}</p>{% endif %}
+    {% if version.quality_flags %}<ul class="small muted" style="margin:4px 0 0;padding-left:18px">{% for flag in version.quality_flags %}<li title="{{ flag }}">{{ quality_flag(flag) }}</li>{% endfor %}</ul>{% endif %}
   </div>
 </div>
+{% if merged_into %}<div class="notice">이 장학은 <a href="/admin/opportunities/{{ merged_into.id }}">{{ merged_into.title }}</a>에 병합되었습니다. 공개 API는 그 장학으로 안내합니다. 잘못 병합했다면 오른쪽 '병합 취소'를 쓰세요.</div>{% endif %}
+{% if version.publication_state == 'draft' and not embedded %}<div class="notice">이 버전은 아직 검색 색인이 없어 공개할 수 없습니다. 오른쪽 '검색 색인 다시 만들기'를 누르고, 작업 큐에서 임베딩이 끝난 뒤 공개하세요.</div>{% endif %}
 
 <div class="layout">
 <div class="stack">
@@ -53,7 +55,7 @@
       <dl class="kv" style="margin-top:6px"><dt>시작</dt><dd>{{ fact(window.start) }}</dd><dt>마감</dt><dd>{{ fact(window.end) }}</dd>
       {% if window.submit_to is defined and window.submit_to in SUBMIT_TO %}<dt>제출처</dt><dd>{{ SUBMIT_TO[window.submit_to] }}{% if window.closing_rule in ['first_come', 'rolling'] %} · {{ '선착순 마감' if window.closing_rule == 'first_come' else '상시 모집' }}{% endif %}</dd>
       {% elif window.application_authority or window.channel %}<dt>접수처</dt><dd>{{ window.application_authority or '' }} {{ window.channel or '' }}</dd>{% endif %}</dl></div>
-    {% else %}{% for stored in windows %}<div class="item-line">{{ stored.window_kind }} {{ stored.start_date or '' }} ~ {{ stored.end_date or '' }} {{ stored.end_time or '' }}</div>{% else %}<p class="muted">원문에서 신청 기간을 찾지 못했습니다.</p>{% endfor %}{% endfor %}
+    {% else %}{% for stored in windows %}<div class="item-line">{{ label('window_kind', stored.window_kind) }} {{ stored.start_date or '' }} ~ {{ stored.end_date or '' }} {{ stored.end_time or '' }}</div>{% else %}<p class="muted">원문에서 신청 기간을 찾지 못했습니다.</p>{% endfor %}{% endfor %}
   </section>
 
   <div class="cols">
@@ -92,7 +94,7 @@
     <h3>그 밖의 조건</h3>
     {% for condition in e.residual_conditions %}<div class="item-line">{{ fact(condition) }}</div>{% else %}<p class="muted">없음</p>{% endfor %}
     {% set source_text = e.original_text or (eligibility.original_eligibility_text if eligibility else '') %}
-    {% if source_text %}<details style="margin-top:10px"><summary>자격 원문 (근거로 인용된 block)</summary><p style="white-space:pre-wrap">{{ source_text }}</p></details>{% endif %}
+    {% if source_text %}<details style="margin-top:10px"><summary>자격 원문 (근거로 인용된 블록)</summary><p style="white-space:pre-wrap">{{ source_text }}</p></details>{% endif %}
     {% elif eligibility %}<p>{{ eligibility.original_eligibility_text }}</p><p>{{ eligibility.residual_conditions_text }}</p>{% endif %}
   </section>
 
@@ -113,9 +115,9 @@
 
   <section class="panel">
     <h2>출처</h2>
-    {% for source in sources %}<div class="item-line">{% if source.relation_kind != 'original' %}<span class="chip info">{{ source.relation_kind }}</span> {% endif %}<a href="/admin/notices/{{ source.notice_id }}">{{ source.title }}</a> · <a class="small" href="{{ source.canonical_url }}" rel="noreferrer">원문 ↗</a></div>{% endfor %}
+    {% for source in sources %}<div class="item-line">{% if source.relation_kind != 'original' %}{{ chip('relation_kind', source.relation_kind) }} {% endif %}<a href="/admin/notices/{{ source.notice_id }}">{{ source.title }}</a> · <a class="small" href="{{ source.canonical_url }}" rel="noreferrer">원문 ↗</a></div>{% endfor %}
     <h3>근거로 쓴 문서</h3>
-    {% for doc in documents %}<div class="small"><a href="/admin/documents/{{ doc.id }}">{{ doc.original_filename or ('본문 이미지' if doc.role == 'inline_image' else '게시글 본문') }}</a> <span class="muted">{{ doc.parser_name }} · {{ doc.status }}</span></div>{% endfor %}
+    {% for doc in documents %}<div class="small"><a href="/admin/documents/{{ doc.id }}">{{ doc.original_filename or ('본문 이미지' if doc.role == 'inline_image' else '게시글 본문') }}</a> <span class="muted">{{ doc.parser_name }}</span> {{ chip('doc_status', doc.status) }}</div>{% endfor %}
   </section>
 
   {% if item %}<details class="panel"><summary>AI 추출 원본(JSON)</summary><pre style="white-space:pre-wrap">{{ item|pretty_json(2) }}</pre></details>{% endif %}
@@ -124,36 +126,46 @@
 <aside class="stack">
   <section class="panel actions">
     <h2>작업</h2>
-    {% if versions|length > 1 %}<div class="small">version: {% for v in versions %}<a href="?version={{ v.version_no }}"{% if v.version_no == version.version_no %} style="font-weight:700"{% endif %}>v{{ v.version_no }}</a> {% endfor %} · <a href="/admin/opportunities/{{ opportunity.id }}/diff">변경 비교</a></div>{% endif %}
+    {% if versions|length > 1 %}<div class="small">버전: {% for v in versions %}<a href="?version={{ v.version_no }}"{% if v.version_no == version.version_no %} style="font-weight:700" aria-current="page"{% endif %} title="{{ label('edit_kind', v.edit_kind) }} · {{ label('publication', v.publication_state) }}">v{{ v.version_no }}</a> {% endfor %} · <a href="/admin/opportunities/{{ opportunity.id }}/diff">최근 두 버전 비교</a></div>{% endif %}
     {% if admin.role in ['reviewer','admin'] %}
       {% if version.publication_state == 'draft' %}
       <form class="action" method="post" action="/admin/opportunity-versions/{{ version.id }}/publish"><input type="hidden" name="csrf" value="{{ csrf }}">
-        <label for="publish-reason">공개 사유</label><input id="publish-reason" name="reason" value="원문 대조 확인" placeholder="사유 (선택)"><button>이 version 공개</button></form>
+        <label for="publish-reason">원문과 대조해 내용이 맞으면 공개하세요. 공개 API에 바로 나갑니다.</label><input id="publish-reason" name="reason" value="원문 대조 확인" placeholder="사유 (선택)"><button>이 버전 공개</button>
+        {% if not embedded %}<span class="small muted">검색 색인이 아직 없어 지금은 공개되지 않습니다.</span>{% endif %}</form>
       {% endif %}
       {% if opportunity.current_version_id %}
+      <details><summary>비공개로 전환…</summary>
       <form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/unpublish"><input type="hidden" name="csrf" value="{{ csrf }}">
-        <label for="unpublish-reason">비공개 사유</label><input id="unpublish-reason" name="reason" placeholder="사유 (선택)"><button class="danger">비공개로 전환</button></form>
+        <label for="unpublish-reason">공개 API에서 이 장학을 내립니다. 다시 공개하려면 버전을 골라 '공개'를 누르면 됩니다.</label><input id="unpublish-reason" name="reason" placeholder="비공개 사유 (선택)"><button class="danger">비공개로 전환</button></form></details>
       {% endif %}
       <form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/overrides"><input type="hidden" name="csrf" value="{{ csrf }}">
-        <label for="override-path">값 직접 수정 (공개 API에 덮어씀)</label>
+        <label for="override-path">값 직접 수정 — 공개 API에서 추출된 값 대신 이 값을 내보냅니다. 수동 수정 이력에서 취소할 수 있습니다.</label>
         <select id="override-path" name="field_path"><option value="/title">제목</option><option value="/description">설명</option><option value="/organization">기관</option><option value="/status">상태</option></select>
-        <input id="override-value" name="value_json" placeholder='"새 값" (JSON)' required><input type="hidden" name="scope_key" value="main">
-        <input id="override-reason" name="reason" placeholder="근거 (선택)"><button class="secondary">수정 저장</button></form>
+        <input id="override-value" name="value_json" placeholder="새 값" aria-label="새 값" required><input type="hidden" name="scope_key" value="main">
+        <input id="override-reason" name="reason" placeholder="근거 (선택)" aria-label="근거"><button class="secondary">수정 저장</button></form>
+      {% if opportunity.lifecycle_status == 'merged' %}
+      <form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/unmerge"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <label>잘못 병합했다면 병합을 취소해 다시 별도 장학으로 둡니다.</label><input name="reason" placeholder="병합 취소 근거 (선택)" aria-label="병합 취소 근거"><button class="secondary">병합 취소</button></form>
+      {% else %}
+      <details><summary>다른 장학에 병합…</summary>
       <form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/merge"><input type="hidden" name="csrf" value="{{ csrf }}">
-        <label for="merge-winner">다른 장학과 같은 모집이면 병합</label><input id="merge-winner" name="winner_id" placeholder="대표 장학 ID" required>
-        <input id="merge-reason" name="reason" placeholder="같은 모집인 근거 (선택)"><button class="secondary">대표 장학으로 병합</button></form>
-      {% if opportunity.lifecycle_status == 'merged' %}<form class="action" method="post" action="/admin/opportunities/{{ opportunity.id }}/unmerge"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="병합 취소 근거 (선택)"><button class="secondary">병합 취소</button></form>{% endif %}
+        <label for="merge-winner">같은 모집(같은 사업·연도·회차)을 두 번 만든 경우에만 병합하세요. 이 장학은 대표 장학에 합쳐지고 공개 API는 대표 장학으로 안내합니다. 대표 장학 화면 아래쪽의 '장학 ID'를 붙여 넣으세요.</label>
+        <input id="merge-winner" name="winner_id" placeholder="대표 장학 ID" required>
+        <input id="merge-reason" name="reason" placeholder="같은 모집인 근거 (선택)" aria-label="같은 모집인 근거"><button class="danger">이 장학을 대표 장학에 병합</button></form></details>
+      {% endif %}
     {% endif %}
     {% if admin.role in ['operator','reviewer','admin'] %}
-      <form class="action" method="post" action="/admin/opportunity-versions/{{ version.id }}/embed"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="상세 화면에서 재임베딩" placeholder="사유 (선택)"><button class="secondary">검색 색인 다시 만들기</button></form>
+      <form class="action" method="post" action="/admin/opportunity-versions/{{ version.id }}/embed"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="상세 화면에서 재임베딩">
+        <label>검색 색인이 없거나 오래됐을 때 이 버전의 색인을 다시 만듭니다.</label><button class="secondary">검색 색인 다시 만들기</button></form>
     {% endif %}
-    <p class="small muted" style="margin:12px 0 0">장학 ID <code>{{ opportunity.id }}</code></p>
+    <p class="small muted" style="margin:12px 0 0">장학 ID <code>{{ opportunity.id }}</code>{% if admin.role == 'admin' %} · <a href="/admin/table/audit?entity={{ opportunity.id }}">변경 기록</a>{% endif %}</p>
   </section>
   <section class="panel" id="reviews">
     <h2>검토 항목</h2>
-    {% for review in reviews %}<div class="item-line small"><span class="chip {{ 'warn' if review.status in ['open','in_review'] else '' }}">{{ review.status }}</span> {{ review.review_kind }}{% if review.payload.operation %} · {{ review.payload.operation }}{% endif %}
-      {% if review.review_kind == 'identity_uncertain' and review.status in ['open','in_review'] %} · <a href="/admin/reviews/{{ review.id }}/identity">비교</a>{% endif %}</div>
-    {% else %}<p class="muted small">없음</p>{% endfor %}
+    {% for review in reviews %}<div class="item-line small">{{ chip('review_status', review.status) }} {{ label('review_kind', review.review_kind) }}
+      {% if review.status in ['open','in_review'] %}{% if review.review_kind == 'identity_uncertain' %} · <a href="/admin/reviews/{{ review.id }}/identity">후보와 비교</a>{% elif review.review_kind == 'revision_candidate' %} · <a href="/admin/reviews/{{ review.id }}/revision">비교하고 적용</a>{% else %} · <a href="/admin/reviews?kind={{ review.review_kind }}#review-{{ review.id }}">검토함에서 보기</a>{% endif %}
+      {% elif review.resolution_note %}<div class="muted" title="{{ review.resolution_note }}">{{ review.resolution_note[:120] }}{% if review.resolution_note|length > 120 %}…{% endif %}</div>{% endif %}</div>
+    {% else %}<p class="muted small">검토 항목이 없습니다.</p>{% endfor %}
   </section>
 </aside>
 </div>

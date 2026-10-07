@@ -6,8 +6,12 @@
   .review .ai-note { font-size: 13px; margin: 8px 0 0; padding: 8px 10px; background: var(--line-2); border-radius: 6px }
   @media (max-width: 1000px) { .review { grid-template-columns: 1fr } }
 </style>{% endblock %}
+{% set here = request.url.path ~ ('?' ~ request.url.query if request.url.query else '') %}
+{% set can_operate = admin.role in ['operator','reviewer','admin'] %}
 {% block content %}
-<div class="page-head"><div><h1>검토함</h1><p class="lede">자동으로 확정하지 않고 사람의 판단을 기다리는 항목입니다. 종류별로 해야 할 일이 다릅니다.{% if ai_pending %} AI 2차 검토 중인 항목 {{ ai_pending }}건은 판단이 끝나면 필요한 것만 여기에 올라옵니다.{% endif %}</p></div></div>
+<div class="page-head"><div><h1>검토함</h1><p class="lede">자동으로 확정하지 못해 사람의 판단을 기다리는 항목입니다. 항목마다 무엇이 문제인지와 할 일이 적혀 있습니다.
+  처리를 마쳤거나 고칠 것이 없으면 오른쪽 '검토 완료'를 누르세요.</p>
+  {% if ai_pending %}<p class="lede small">지금 <b>{{ ai_pending }}건</b>은 AI 2차 검토 중입니다. AI가 스스로 해결하지 못한 항목만 판단 근거와 함께 여기에 올라옵니다. 진행 상황은 <a href="/admin/table/jobs?stage=review">작업 큐</a>에서 볼 수 있습니다.</p>{% endif %}</div></div>
 <div class="tabs">
   <a class="{% if not kind %}on{% endif %}" href="/admin/reviews">전체 {{ counts|sum(attribute='count') }}</a>
   {% for row in counts %}<a class="{% if kind == row.review_kind %}on{% endif %}" href="?kind={{ row.review_kind }}">{{ labels.get(row.review_kind, row.review_kind) }} {{ row.count }}</a>{% endfor %}
@@ -15,35 +19,53 @@
 
 {% for row in rows %}
 {% set p = row.payload %}
-<article class="panel review">
+<article class="panel review" id="review-{{ row.id }}">
   <div>
-    <div><span class="chip {{ 'info' if row.review_kind in ['revision_candidate', 'identity_uncertain'] else 'warn' }}">{{ labels.get(row.review_kind, row.review_kind) }}</span>
-      <span class="small muted">{{ row.created_at.strftime('%Y-%m-%d %H:%M') }}</span></div>
+    <div>{{ chip('review_kind', row.review_kind) }}
+      <span class="small muted">{{ row.created_at|kst }} 등록</span></div>
     <h2 style="margin:8px 0 0">
       {% if row.opportunity_id %}<a href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.subject_title or '장학' }}</a>
       {% elif row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}">{{ row.subject_title or '공고' }}</a>
-      {% else %}{{ row.subject_title or row.entity_type }}{% endif %}</h2>
-    {% if p.ai_review and p.ai_review.reason %}<p class="ai-note"><span class="chip">AI 2차 검토</span> {{ p.ai_review.reason }} <span class="muted small">({{ p.ai_review.model }}, 확신 {{ {'high': '높음', 'medium': '보통', 'low': '낮음'}.get(p.ai_review.confidence, p.ai_review.confidence) }})</span></p>
-    {% elif p.ai_review and p.ai_review.error %}<p class="ai-note muted small">AI 2차 검토를 하지 못해 바로 올라왔습니다: {{ p.ai_review.error[:200] }}</p>{% endif %}
+      {% else %}{{ row.subject_title or label('entity_type', row.entity_type) }}{% endif %}</h2>
+    {% if row.opportunity_id and row.notice_id %}<p class="small" style="margin:2px 0 0"><a href="/admin/notices/{{ row.notice_id }}">출처 공고 보기</a></p>{% endif %}
+
+    {% set ai = p.ai_review %}
+    {% if ai and ai.reason %}<div class="ai-note"><span class="chip info">AI 2차 검토 의견</span> {{ ai.reason }}
+      <span class="muted small">({{ ai.model }}, 확신 {{ {'high': '높음', 'medium': '보통', 'low': '낮음'}.get(ai.confidence, ai.confidence) }})</span>
+      {% if ai.action_refused %}<div class="small" style="margin-top:4px">{{ ACTION_REFUSED_HELP }} <details style="display:inline"><summary>거부 사유</summary><span class="mono">{{ ai.action_refused }}</span></details></div>{% endif %}</div>
+    {% elif ai and ai.error %}<p class="ai-note small">AI 2차 검토를 하지 못해 바로 올라왔습니다. {% set help = error_help('', ai.error) %}{{ help.summary }}. <details style="display:inline"><summary>오류 원문</summary><span class="mono">{{ ai.error[:300] }}</span></details></p>
+    {% elif ai and ai.skipped %}<p class="ai-note small">AI 2차 검토 모델이 꺼져 있어 바로 올라왔습니다. 켜려면 <a href="/admin/settings">AI 설정</a>의 'AI 2차 검토'에서 모델을 정하세요.</p>{% endif %}
+
     {% if row.review_kind == 'revision_candidate' %}
-      <p class="what">이 공고가 다른 장학의 {{ {'extension': '기간 연장', 'correction': '정정', 'cancellation': '취소', 'reopened': '재접수'}.get(p.kind, p.kind) }} 공고로 보입니다. 대상 장학을 고르고 바뀐 값을 원문과 대조한 뒤 새 version으로 적용하세요.</p>
+      <p class="what">이 공고가 다른 장학의 {{ {'extension': '기간 연장', 'correction': '정정', 'cancellation': '취소', 'reopened': '재접수'}.get(p.kind, '정정·연장') }} 공고로 보입니다.
+        바뀐 내용이 기존 장학에 반영되어야 하면, 대상 장학을 고르고 바뀐 값을 원문과 대조한 뒤 새 버전으로 적용하세요. 별개 공고라면 '검토 완료'를 누르세요.</p>
       <p><a class="btn" href="/admin/reviews/{{ row.id }}/revision">비교하고 적용하기</a></p>
     {% elif row.review_kind == 'identity_uncertain' %}
-      {% if p.operation == 'cross_notice_candidates' %}<p class="what">다른 공고에서 나온 비슷한 장학 {{ p.candidates|length }}건이 있습니다. 같은 모집이면 병합하고, 다른 회차·다른 사업이면 다르다고 표시하세요.</p>
-      {% elif p.operation in ['same_notice_unmatched', 'same_slot_renamed'] %}<p class="what">같은 공고를 다시 추출했는데 이름이 달라 기존 장학과 자동으로 연결하지 않았습니다. 같은 장학이면 병합하세요.</p>
-      {% else %}<p class="what">AI가 이 공고를 기존 장학의 {{ {'same_cycle': '같은 회차', 'new_cycle': '새 회차', 'uncertain': '관련 공고'}.get(p.candidate_kind, '관련 공고') }}로 보았습니다(“{{ p.normalized_name }}”{% if p.academic_year %}, {{ p.academic_year }}{% endif %}). 공고를 확인하고, 같은 모집이면 해당 장학 화면에서 병합하세요.</p>
+      {% if p.operation == 'cross_notice_candidates' %}<p class="what">다른 공고에서 나온 비슷한 장학 {{ (p.candidates or [])|length }}건이 있습니다. 같은 모집(같은 사업·연도·회차)이면 병합하고, 다른 회차·다른 사업이면 '다른 장학'으로 판정하세요.</p>
+      {% elif p.operation == 'same_notice_unmatched' %}<p class="what">같은 공고를 다시 추출했는데 장학 이름이 달라 기존 장학과 자동으로 잇지 않고 새 장학을 만들었습니다{% if p.extracted_name %} (새 이름 “{{ p.extracted_name }}”){% endif %}. 기존 장학과 같은 것이면 병합하고, 정말 다른 장학이면 '검토 완료'를 누르세요.</p>
+      {% elif p.operation == 'same_slot_renamed' %}<p class="what">같은 공고를 다시 추출했더니 장학 이름이 바뀌었습니다. 공고에 장학이 하나뿐이라 기존 장학의 새 버전으로 이었습니다. 같은 장학이 맞으면 '검토 완료'를 누르세요.</p>
+      {% elif p.operation == 'split' %}<p class="what">관리자가 분리를 요청해 새로 만든 장학입니다. AI 추출이 끝난 뒤 내용이 맞는지 확인하고 '검토 완료'를 누르세요.</p>
+      {% else %}<p class="what">AI가 이 공고를 기존 장학의 {{ {'same_cycle': '같은 회차', 'new_cycle': '새 회차', 'uncertain': '관련 공고'}.get(p.candidate_kind, '관련 공고') }}로 보았습니다{% if p.normalized_name %} (“{{ p.normalized_name }}”{% if p.academic_year %}, {{ p.academic_year }}{% endif %}){% endif %}. 공고를 확인하고, 같은 모집이면 해당 장학 화면에서 병합하세요. 따로 둘 장학이면 '검토 완료'를 누르세요.</p>
       {% for ref in (p.evidence or [])[:2] %}<p class="small muted">“{{ ref.quote }}”</p>{% endfor %}{% endif %}
-      {% if row.opportunity_id %}<p><a class="btn" href="/admin/reviews/{{ row.id }}/identity">후보 비교하기</a></p>{% endif %}
-    {% elif row.review_kind in ['parsing_failed', 'embedding_failed'] %}
-      <p class="what">{{ '게시글·문서를 읽지 못했습니다' if row.review_kind == 'parsing_failed' else '검색 색인을 만들지 못했습니다' }}{% if p.stage %} ({{ p.stage }}){% endif %}. 원인을 고친 뒤 다시 수집하거나 재처리하세요.</p>
-      <p class="small mono">{{ (p.error or '')[:240] }}</p>
-    {% elif row.review_kind == 'llm_validation_failed' %}
-      <p class="what">AI 추출이 반복해서 실패했습니다. 원인: <span class="mono">{{ (p.error or '')[:240] }}</span></p>
-    {% elif row.review_kind == 'other' and p.quality_flags %}
-      <p class="what">자동 공개 기준을 통과하지 못했습니다. 추출 결과를 원문과 대조해 직접 공개하거나 그대로 두세요.</p>
-      <ul class="small">{% for flag in p.quality_flags[:5] %}<li>{{ flag[:200] }}</li>{% endfor %}{% if p.quality_flags|length > 5 %}<li class="muted">외 {{ p.quality_flags|length - 5 }}건</li>{% endif %}</ul>
+      {% if row.opportunity_id %}<p><a class="btn" href="/admin/reviews/{{ row.id }}/identity">후보와 비교하기</a></p>{% endif %}
+    {% elif row.review_kind in ['parsing_failed', 'embedding_failed', 'llm_validation_failed'] %}
+      {% set help = error_help(row.job_error_code, p.error) %}
+      <p class="what">{% if row.review_kind == 'parsing_failed' %}{{ '게시글 상세 페이지를 읽지 못했습니다' if p.stage == 'detail' else '게시글 본문이나 첨부를 읽지(파싱) 못했습니다' }}{% elif row.review_kind == 'embedding_failed' %}검색 색인(임베딩)을 만들지 못했습니다{% else %}AI 추출이 자동 재시도 끝에 실패했습니다{% endif %}{% if help.summary %} — <b>{{ help.summary }}</b>{% endif %}.</p>
+      {% if help.action %}<p class="what">{{ help.action }}</p>{% endif %}
+      <details class="small"><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{% if row.job_error_code %}{{ row.job_error_code }}: {% endif %}{{ (p.error or '')[:1000] }}</pre></details>
+      <p class="small" style="margin:8px 0 0">
+        {% if row.notice_id %}<a class="btn secondary" href="/admin/notices/{{ row.notice_id }}">공고 화면에서 확인</a>{% endif %}
+        {% if p.job_id %}<a class="btn secondary" href="/admin/table/jobs?status=failed">실패한 작업 보기</a>{% endif %}</p>
+      {% if row.review_kind == 'llm_validation_failed' and row.notice_version_id and can_operate %}
+      <form class="inline" method="post" action="/admin/notice-versions/{{ row.notice_version_id }}/extract"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="검토함에서 AI 재추출"><input type="hidden" name="next" value="{{ here }}"><button class="secondary">AI 재추출 요청</button><span class="small muted">요청한 뒤 결과를 확인하고 이 항목을 '검토 완료'로 닫으세요.</span></form>{% endif %}
+    {% elif row.review_kind == 'other' and p.quality_flags is defined %}
+      <p class="what">자동 공개 기준(품질 '완전')을 통과하지 못해 공개하지 않고 두었습니다. 아래 메모를 원문과 대조해, 맞으면 장학 화면에서 직접 공개하고 틀린 값은 고치세요. 공개하지 않을 것이면 그대로 '검토 완료'를 누르세요.</p>
+      <ul class="small">{% for flag in p.quality_flags[:5] %}<li title="{{ flag }}">{{ quality_flag(flag)[:240] }}</li>{% endfor %}{% if p.quality_flags|length > 5 %}<li class="muted">외 {{ p.quality_flags|length - 5 }}건 (장학 화면에서 모두 볼 수 있습니다)</li>{% endif %}</ul>
+      {% if row.opportunity_id %}<p><a class="btn" href="/admin/opportunities/{{ row.opportunity_id }}">장학 화면에서 확인·공개</a></p>{% endif %}
     {% elif p.operation == 'auto_publish_blocked' %}
-      <p class="what">자동 공개가 DB 규칙에 막혔습니다: <span class="mono">{{ p.error }}</span></p>
+      <p class="what">자동 공개를 하려 했지만 데이터 규칙에 막혔습니다. 대개 원문 안에서 값이 서로 다르거나(근거 충돌) 출처 문서를 다 읽지 못한 경우입니다. 장학 화면에서 값을 확인한 뒤 공개하거나 그대로 두세요.</p>
+      <details class="small"><summary>오류 원문</summary><span class="mono">{{ p.error }}</span></details>
+      {% if row.opportunity_id %}<p><a class="btn" href="/admin/opportunities/{{ row.opportunity_id }}">장학 화면에서 확인</a></p>{% endif %}
     {% else %}
       <details><summary>내용 보기</summary><pre class="small" style="white-space:pre-wrap">{{ p|pretty_json(2) }}</pre></details>
     {% endif %}
@@ -51,15 +73,15 @@
   <div>
     {% if admin.role in ['reviewer','admin'] %}
     <form class="action" method="post" action="/admin/reviews/{{ row.id }}/resolve">
-      <input type="hidden" name="csrf" value="{{ csrf }}">
-      <label class="small muted" for="reason-{{ row.id }}">처리 완료로 표시</label>
+      <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="next" value="{{ here }}">
+      <label class="small muted" for="reason-{{ row.id }}">처리를 마쳤거나 고칠 것이 없으면 완료로 표시합니다. 이 목록에서 사라지고 감사 로그에 남습니다.</label>
       <textarea id="reason-{{ row.id }}" name="reason" rows="2" placeholder="판단 근거 (선택)"></textarea>
       <button class="secondary">검토 완료</button>
     </form>
-    {% endif %}
+    {% else %}<p class="small muted">검토 완료 처리는 '검토' 역할 이상만 할 수 있습니다.</p>{% endif %}
   </div>
 </article>
 {% else %}
-<div class="panel empty">대기 중인 검토가 없습니다.</div>
+<div class="panel empty">{% if kind %}이 종류의 검토 항목이 없습니다. <a href="/admin/reviews">전체 보기</a>{% else %}대기 중인 검토가 없습니다.{% if ai_pending %} AI 2차 검토가 끝나면 필요한 항목만 여기에 올라옵니다.{% endif %}{% endif %}</div>
 {% endfor %}
 {% endblock %}

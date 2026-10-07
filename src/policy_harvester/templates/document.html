@@ -22,14 +22,16 @@
 <div class="page-head"><div>
   <div class="crumbs"><a href="/admin/notices">공고 목록</a> / <a href="/admin/notices/{{ document.notice_id }}">{{ document.notice_title }}</a></div>
   <h1>{{ document.original_filename or '게시글 본문' }}</h1>
-  <p class="lede">왼쪽은 수집한 원문, 오른쪽은 파싱 결과(block)입니다. AI 추출의 근거 인용은 오른쪽 block을 가리킵니다.</p>
+  <p class="lede">왼쪽은 수집한 원문, 오른쪽은 이를 읽어(파싱) 나눈 블록입니다. AI 추출 결과의 근거 인용은 오른쪽 블록을 가리킵니다. 내용이 빠졌거나 깨졌으면 '재파싱'을 누르세요.</p>
 </div>
-<div class="small muted" style="text-align:right">{{ document.parser_name }} {{ document.parser_version }} · <span class="chip {{ 'ok' if document.status == 'succeeded' else ('warn' if document.status == 'partial' else 'bad') }}">{{ document.status }}</span>
-  {% for flag in document.quality_flags %}<span class="chip">{{ flag }}</span>{% endfor %}<br>
+<div class="small muted" style="text-align:right">파서 {{ document.parser_name }} {{ document.parser_version }} · {{ chip('doc_status', document.status) }}
+  {% for flag in document.quality_flags %}<span class="chip" title="{{ flag }}">{{ quality_flag(flag) }}</span>{% endfor %}<br>
   {{ mime or 'text/html' }}{% if document.byte_size %} · {{ (document.byte_size / 1024)|round|int }} KB{% endif %}
-  {% if document.binary_asset_id %} · <a href="/admin/assets/{{ document.binary_asset_id }}/download">원본 다운로드</a>{% endif %}</div>
+  {% if document.binary_asset_id %} · <a href="/admin/assets/{{ document.binary_asset_id }}/download">원본 내려받기</a>{% endif %}
+  {% if admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/documents/{{ document.id }}/reprocess"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="문서 화면에서 재파싱"><button class="secondary small-btn" title="이 문서를 다시 읽습니다. 끝나면 AI 추출도 다시 실행됩니다.">재파싱</button></form>{% endif %}</div>
 </div>
-{% if document.error_message %}<pre class="panel bad">{{ document.error_message }}</pre>{% endif %}
+{% if document.error_message %}{% set help = error_help(document.error_code, document.error_message) %}<div class="notice"><b>이 문서를 읽는 중 문제가 있었습니다{% if help.summary %}: {{ help.summary }}{% endif %}.</b> {{ help.action }}
+  <details><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ document.error_message }}</pre></details></div>{% endif %}
 
 <div class="viewer">
   <section class="source" aria-label="원문">
@@ -43,7 +45,7 @@
   </section>
 
   <section class="blocks" aria-label="파싱 결과">
-    <div class="small muted">block {{ blocks|length }}개</div>
+    <div class="small muted">블록 {{ blocks|length }}개</div>
     {% for block in blocks %}
     <article class="block{% if highlight == block.id|string %} hit{% endif %}" id="block-{{ block.id }}">
       <div class="meta">
@@ -56,9 +58,9 @@
       {% if block.table_data and block.table_data.rows %}
         <div style="overflow-x:auto"><table>{% for row in block.table_data.rows %}<tr>{% for cell in row %}<td>{{ cell }}</td>{% endfor %}</tr>{% endfor %}</table></div>
       {% else %}<div class="text">{{ block.text_content }}</div>{% endif %}
-      <details class="small" style="margin-top:6px"><summary>block 정보</summary><div class="mono">{{ block.id }} · {{ block.source_path or '' }}</div><pre>{{ block.extraction_metadata|pretty_json(2) }}</pre></details>
+      <details class="small" style="margin-top:6px"><summary>블록 정보</summary><div class="mono">{{ block.id }} · {{ block.source_path or '' }}</div><pre>{{ block.extraction_metadata|pretty_json(2) }}</pre></details>
     </article>
-    {% else %}<div class="panel empty">block이 없습니다.</div>{% endfor %}
+    {% else %}<div class="panel empty">읽어 낸 블록이 없습니다. 스캔 이미지뿐이거나 지원하지 않는 형식일 수 있습니다. 원본을 내려받아 확인하세요.</div>{% endfor %}
   </section>
 </div>
 {% endblock %}

@@ -1,4 +1,6 @@
 {% extends "base.html" %}{% block title %}{{ notice.title }} · Policy Harvester{% endblock %}
+{% set can_operate = admin.role in ['operator','reviewer','admin'] %}
+{% macro review_link(review) %}{% if review.review_kind == 'identity_uncertain' and review.opportunity_id %}/admin/reviews/{{ review.id }}/identity{% elif review.review_kind == 'revision_candidate' %}/admin/reviews/{{ review.id }}/revision{% else %}/admin/reviews?kind={{ review.review_kind }}#review-{{ review.id }}{% endif %}{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div>
@@ -6,10 +8,10 @@
     <h1>{{ notice.title }}</h1>
     <p class="lede">{{ notice.category_name or '' }}{% if notice.department_name %} · {{ notice.department_name }}{% endif %}{% if notice.published_on %} · 게시 {{ notice.published_on }}{% endif %} · <a href="{{ notice.canonical_url }}" rel="noreferrer">원문 게시글 ↗</a></p>
   </div>
-  {% if admin.role in ['operator','reviewer','admin'] and notice.scope_status == 'included' %}
+  {% if can_operate and notice.scope_status == 'included' %}
   <form class="inline" method="post" action="/admin/notice-versions/{{ notice.version_id }}/extract">
-    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재추출" placeholder="사유 (선택)">
-    <button class="secondary">AI 재추출 요청</button>
+    <input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재추출">
+    <button class="secondary" title="이 공고의 AI 추출을 다시 실행하는 작업을 작업 큐에 넣습니다. 기존 장학은 새 결과로 갱신됩니다.">AI 재추출 요청</button>
   </form>{% endif %}
 </div>
 
@@ -18,77 +20,79 @@
     <section class="panel">
       <h2>상태</h2>
       <dl class="kv">
-        <dt>수집 범위</dt><dd>{% if notice.scope_status == 'included' %}<span class="chip ok">장학 분류</span>{% else %}<span class="chip">{{ notice.scope_status }}</span>{% endif %}</dd>
-        <dt>원문 접근</dt><dd>{{ notice.availability_status }} <span class="muted small">마지막 확인 {{ notice.last_checked_at.strftime('%Y-%m-%d %H:%M') if notice.last_checked_at else '' }}</span></dd>
-        <dt>원문 version</dt><dd>{{ notice.revision_no }}번째 · 첨부 수집 {{ notice.asset_collection_status }} · <a href="/admin/notices/{{ notice.id }}/diff">본문 변경</a> · <a href="/admin/notices/{{ notice.id }}/assets-diff">첨부 변경</a></dd>
-        <dt>AI 추출</dt><dd>{% if runs %}{% set run = runs[0] %}<span class="chip {{ 'ok' if run.status == 'succeeded' else ('bad' if run.status == 'failed' else 'info') }}">{{ run.status }}</span> {{ run.prompt_version }} · 장학 {{ run.item_count }}개{% else %}<span class="chip">아직 없음</span>{% endif %}</dd>
+        <dt>수집 범위</dt><dd>{{ chip('scope', notice.scope_status) }}{% if notice.scope_status != 'included' %} <span class="small muted">장학 분류가 아니라 AI 추출을 하지 않습니다.</span>{% endif %}</dd>
+        <dt>원문</dt><dd>{{ chip('availability', notice.availability_status) }} <span class="muted small">마지막 확인 {{ notice.last_checked_at|kst }}</span></dd>
+        <dt>원문 버전</dt><dd>{{ notice.revision_no }}번째 수집본{% if notice.revision_no > 1 %} (게시 후 {{ notice.revision_no - 1 }}번 수정됨){% endif %} · 첨부 {{ label('asset_collection', notice.asset_collection_status) }}
+          <div class="small">{% if notice.revision_no > 1 %}<a href="/admin/notices/{{ notice.id }}/diff">본문 바뀐 곳</a> · <a href="/admin/notices/{{ notice.id }}/assets-diff">첨부 바뀐 곳</a>{% else %}<a href="/admin/notices/{{ notice.id }}/assets-diff">첨부 목록</a>{% endif %}</div></dd>
+        <dt>AI 추출</dt><dd>{% if runs %}{% set run = runs[0] %}{{ chip('extraction_status', run.status) }}{% if run.status == 'succeeded' %} 장학 {{ run.item_count }}개{% elif run.error_code %} {{ error_help(run.error_code, run.error_message).summary }} · <a href="#runs">자세히</a>{% endif %} <span class="small muted">{{ run.finished_at|kst if run.finished_at else run.started_at|kst }}</span>{% else %}<span class="chip">아직 없음</span>{% endif %}</dd>
       </dl>
     </section>
     <section class="panel" id="opportunities">
       <h2>이 공고에서 나온 장학</h2>
       {% for row in opportunities %}<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-2)">
         <a href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.title }}</a>
-        <span style="white-space:nowrap">{% if row.relation_kind != 'original' %}<span class="chip info">{{ row.relation_kind }}</span> {% endif %}<span class="chip {{ 'ok' if row.data_quality_status == 'complete' else ('warn' if row.data_quality_status == 'partial' else 'bad') }}">{{ {'complete': '완전', 'partial': '일부 불완전', 'needs_review': '검토 필요'}[row.data_quality_status] }}</span></span></div>
-      {% else %}<p class="muted">{% if notice.scope_status != 'included' %}범위 밖 공고라 AI 추출을 하지 않습니다.{% else %}아직 추출된 장학이 없습니다.{% endif %}</p>{% endfor %}
-      {% if reviews %}<h3>검토 항목</h3>{% for review in reviews %}<div class="small">{{ review_labels.get(review.review_kind, review.review_kind) }} · {{ review.status }} · <a href="/admin/reviews">검토함</a></div>{% endfor %}{% endif %}
+        <span style="white-space:nowrap">{% if row.relation_kind != 'original' %}{{ chip('relation_kind', row.relation_kind) }} {% endif %}{{ chip('publication', row.publication_state) }} {{ chip('quality', row.data_quality_status) }}</span></div>
+      {% else %}<p class="muted">{% if notice.scope_status != 'included' %}범위 밖 공고라 AI 추출을 하지 않습니다.{% elif runs and runs[0].status == 'failed' %}AI 추출이 실패했습니다. 아래 'AI 추출 실행'에서 원인을 확인하고 'AI 재추출 요청'을 누르세요.{% elif runs %}AI 추출 결과 이 공고에서는 장학을 찾지 못했습니다.{% else %}아직 AI 추출 전입니다. 파싱이 끝나면 자동으로 시작합니다.{% endif %}</p>{% endfor %}
+      {% if reviews %}<h3>검토 항목</h3>{% for review in reviews %}<div class="small" style="padding:3px 0">{{ chip('review_status', review.status) }} {% if review.status in ['open', 'in_review'] %}<a href="{{ review_link(review) }}">{{ label('review_kind', review.review_kind) }}</a>{% else %}{{ label('review_kind', review.review_kind) }}{% endif %}{% if review.status in ['resolved', 'dismissed'] and review.resolution_note %} <span class="muted" title="{{ review.resolution_note }}">— {{ review.resolution_note[:80] }}{% if review.resolution_note|length > 80 %}…{% endif %}</span>{% endif %}</div>{% endfor %}{% endif %}
     </section>
   </div>
 
-  <section>
+  <section id="documents">
     <h2>본문과 첨부 파싱 결과</h2>
     <div class="table-wrap"><table>
-      <thead><tr><th>문서</th><th>파서</th><th>결과</th><th>block</th><th></th></tr></thead>
+      <thead><tr><th>문서</th><th>파서</th><th>결과</th><th>블록</th><th></th></tr></thead>
       <tbody>
       {% for doc in documents %}
       <tr>
         <td><a class="title" href="/admin/documents/{{ doc.id }}">{{ doc.original_filename or ('본문 이미지' if doc.role == 'inline_image' else '게시글 본문') }}</a><div class="sub">{{ {'attachment': '첨부', 'inline_image': '본문 이미지'}.get(doc.role, '본문 HTML') }}{% if doc.byte_size %} · {{ (doc.byte_size / 1024)|round|int }} KB{% endif %}</div></td>
         <td class="small">{{ doc.parser_name }} <span class="muted">{{ doc.parser_version }}</span></td>
-        <td><span class="chip {{ 'ok' if doc.status == 'succeeded' else ('warn' if doc.status == 'partial' else 'bad') }}">{{ doc.status }}</span>{% for flag in doc.quality_flags %} <span class="chip">{{ {'llm_transcription': 'LLM 전사', 'scanned_pages': '스캔 페이지', 'hwp5txt_recovered_lines': '누락 줄 복구'}.get(flag, flag) }}</span>{% endfor %}</td>
+        <td>{{ chip('doc_status', doc.status) }}{% for flag in doc.quality_flags %} <span class="chip" title="{{ flag }}">{{ quality_flag(flag) }}</span>{% endfor %}</td>
         <td class="num">{{ doc.blocks }}</td>
-        <td style="white-space:nowrap">{% if doc.binary_asset_id %}<a href="/admin/assets/{{ doc.binary_asset_id }}/download">원본</a>{% endif %}
-          {% if admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/documents/{{ doc.id }}/reprocess"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재파싱" placeholder="사유 (선택)"><button class="secondary">재파싱</button></form>{% endif %}</td>
+        <td class="row-action">{% if doc.binary_asset_id %}<a class="small" href="/admin/assets/{{ doc.binary_asset_id }}/download">원본 받기</a>{% endif %}
+          {% if can_operate %}<form class="inline" method="post" action="/admin/documents/{{ doc.id }}/reprocess"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재파싱"><button class="secondary small-btn" title="이 문서를 다시 읽습니다. 끝나면 AI 추출도 다시 실행됩니다.">재파싱</button></form>{% endif %}</td>
       </tr>
-      {% else %}<tr><td colspan="5" class="muted">파싱된 문서가 없습니다.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="5" class="muted">파싱된 문서가 아직 없습니다. 파싱 작업 상태는 아래 '처리 작업'에서 볼 수 있습니다.</td></tr>{% endfor %}
       </tbody>
     </table></div>
     {% set unparsed = assets|selectattr('download_status', 'ne', 'succeeded')|list %}
-    {% if unparsed %}<p class="small bad">내려받지 못한 첨부: {% for asset in unparsed %}{{ asset.original_filename or asset.role }} ({{ asset.download_status }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
+    {% if unparsed %}<p class="small bad">내려받지 못한 첨부: {% for asset in unparsed %}{{ asset.original_filename or label('asset_role', asset.role) }} ({{ label('download', asset.download_status) }}){% if not loop.last %}, {% endif %}{% endfor %}. 이 첨부 내용은 AI 추출에 쓰이지 않았습니다.</p>{% endif %}
   </section>
 
   {% if body %}<details class="panel"><summary>파싱된 본문 텍스트 보기</summary><pre style="white-space:pre-wrap;margin:12px 0 0">{{ body }}</pre></details>{% endif %}
 
   <div class="cols">
-    <section>
+    <section id="runs">
       <h2>AI 추출 실행</h2>
-      <div class="table-wrap"><table><thead><tr><th>시작</th><th>결과</th><th>prompt</th><th>토큰(입력/출력)</th></tr></thead><tbody>
-      {% for run in runs %}<tr><td class="num small">{{ run.started_at.strftime('%m-%d %H:%M') if run.started_at else '' }}</td>
-        <td><span class="chip {{ 'ok' if run.status == 'succeeded' else ('bad' if run.status == 'failed' else 'info') }}">{{ run.status }}</span>{% if run.error_code %}<div class="sub bad">{{ run.error_code }}</div>{% endif %}</td>
-        <td class="small">{{ run.prompt_version }}</td><td class="num small">{{ run.input_tokens or '' }} / {{ run.output_tokens or '' }}</td></tr>
-      {% else %}<tr><td colspan="4" class="muted">실행 기록 없음</td></tr>{% endfor %}
+      <div class="table-wrap"><table><thead><tr><th>시작</th><th>결과</th><th>모델·프롬프트</th><th>토큰(입력/출력)</th></tr></thead><tbody>
+      {% for run in runs %}<tr><td class="num small">{{ run.started_at|kst }}</td>
+        <td>{{ chip('extraction_status', run.status) }}{% if run.status == 'succeeded' %}<div class="sub">장학 {{ run.item_count }}개</div>{% endif %}
+          {% if run.error_code %}{% set help = error_help(run.error_code, run.error_message) %}<div class="sub bad">{{ help.summary }}</div><details class="small"><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ run.error_code }}: {{ run.error_message or '' }}</pre></details>{% endif %}</td>
+        <td class="small">{{ run.model_id }}<div class="sub">{{ run.prompt_version }}</div>{% if not loop.last %}<a class="small" href="/admin/ai-runs/{{ run.id }}/compare">이전 실행과 비교</a>{% endif %}</td><td class="num small">{{ run.input_tokens or '' }} / {{ run.output_tokens or '' }}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted">실행 기록이 없습니다.</td></tr>{% endfor %}
       </tbody></table></div>
     </section>
     <section>
       <h2>LLM 요청·응답 원본</h2>
-      <div class="table-wrap"><table><thead><tr><th>시각</th><th>용도</th><th>모델</th><th>결과</th><th>시간</th><th>토큰</th></tr></thead><tbody>
+      <div class="table-wrap"><table><thead><tr><th>시각</th><th>용도</th><th>모델</th><th>결과</th><th>걸린 시간</th><th>토큰</th></tr></thead><tbody>
       {% for x in exchanges %}<tr><td class="num small"><a href="/admin/llm-exchanges/{{ x.id }}">{{ x.started_at.strftime('%m-%d %H:%M:%S') }}</a></td>
-        <td class="small">{{ {'extraction': 'AI 추출', 'repair': 'JSON 수리', 'transcription': '이미지 전사'}.get(x.purpose, x.purpose) }}</td>
+        <td class="small">{{ label('exchange_purpose', x.purpose) }}</td>
         <td class="small">{{ x.model_id }}</td>
-        <td><span class="chip {{ 'ok' if x.status == 'ok' else 'bad' }}">{{ x.status }}</span></td>
-        <td class="num small">{{ ((x.latency_ms or 0) / 1000)|round(1) }}s</td><td class="num small">{{ x.input_tokens or '' }} / {{ x.output_tokens or '' }}</td></tr>
-      {% else %}<tr><td colspan="6" class="muted">기록 없음 (기록은 이 기능 도입 이후 호출부터 남습니다)</td></tr>{% endfor %}
+        <td>{{ chip('exchange_status', x.status) }}</td>
+        <td class="num small">{{ ((x.latency_ms or 0) / 1000)|round(1) }}초</td><td class="num small">{{ x.input_tokens or '' }} / {{ x.output_tokens or '' }}</td></tr>
+      {% else %}<tr><td colspan="6" class="muted">기록이 없습니다. (이 기능을 도입한 뒤의 호출부터 남습니다)</td></tr>{% endfor %}
       </tbody></table></div>
     </section>
   </div>
-  <div class="cols">
-    <section>
-      <h2>처리 작업</h2>
-      <div class="table-wrap"><table><thead><tr><th>단계</th><th>상태</th><th>시도</th><th>오류</th></tr></thead><tbody>
-      {% for job in jobs %}<tr><td class="small">{{ {'parse_document': '파싱', 'structure': 'AI 추출', 'embed': '임베딩'}.get(job.stage, job.stage) }}</td>
-        <td><span class="chip {{ 'ok' if job.status == 'succeeded' else ('bad' if job.status == 'failed' else 'info') }}">{{ job.status }}</span></td>
-        <td class="num">{{ job.attempt_count }}</td><td class="small bad">{{ job.error_code or '' }}</td></tr>
-      {% else %}<tr><td colspan="4" class="muted">작업 없음</td></tr>{% endfor %}
-      </tbody></table></div>
-    </section>
-  </div>
+  <section id="jobs">
+    <h2>처리 작업</h2>
+    <div class="table-wrap"><table><thead><tr><th>단계</th><th>상태</th><th>시각</th><th>오류</th><th></th></tr></thead><tbody>
+    {% for job in jobs %}<tr><td>{{ chip('job_stage', job.stage) }}</td>
+      <td>{{ chip('job_status', job.status) }}<div class="sub num">시도 {{ job.attempt_count }}/{{ job.max_attempts }}{% if job.status == 'retry' %} · 다음 {{ job.available_at|kst }}{% endif %}</div></td>
+      <td class="num small">{{ (job.finished_at or job.created_at)|kst }}</td>
+      <td class="small" style="max-width:420px">{% if job.error_code and job.status == 'succeeded' %}<span class="muted">이전 시도 오류 후 완료</span>{% elif job.error_code %}{% set help = error_help(job.error_code, job.error_message) %}<b class="{{ 'bad' if job.status == 'failed' else '' }}">{{ help.summary }}</b><div>{{ help.action }}</div><details><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ job.error_code }}: {{ job.error_message }}</pre></details>{% endif %}</td>
+      <td class="row-action">{% if can_operate and job.status in ['failed', 'retry'] %}<form class="inline" method="post" action="/admin/jobs/{{ job.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재시도"><input type="hidden" name="next" value="/admin/notices/{{ notice.id }}"><button class="secondary small-btn">{{ '지금 재시도' if job.status == 'retry' else '재시도' }}</button></form>{% endif %}</td></tr>
+    {% else %}<tr><td colspan="5" class="muted">작업이 없습니다.</td></tr>{% endfor %}
+    </tbody></table></div>
+  </section>
 </div>
 {% endblock %}

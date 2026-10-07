@@ -1,71 +1,84 @@
-{% extends "base.html" %}{% block title %}Revision 검토 · Policy Harvester{% endblock %}
+{% extends "base.html" %}{% block title %}정정·연장 적용 · Policy Harvester{% endblock %}
+{% set KINDS = {'extension': '기간 연장', 'correction': '정정', 'cancellation': '취소', 'reopened': '재접수'} %}
+{% set is_open = review.status in ['open', 'in_review'] %}
 {% block content %}
-<h1>Revision 검토</h1>
-<p class="muted">정정·연장 공고: <b>{{ review.title }}</b> · 상태 {{ review.status }} · 관측 {{ review.observed_at }}</p>
-<p class="muted">LLM 제안은 후보일 뿐이다. 같은 사업·회차·필드 범위와 새 값을 원문에서 직접 확인한 경우에만 적용한다.</p>
+<div class="page-head"><div>
+  <div class="crumbs"><a href="/admin/reviews">검토함</a> / 정정·연장 후보</div>
+  <h1>정정·연장 내용을 기존 장학에 적용</h1>
+  <p class="lede">정정·연장 공고: <a href="/admin/notices/{{ review.notice_id }}">{{ review.title }}</a> · {{ review.observed_at|kst }} 수집</p>
+  <p class="lede small">AI가 찾은 내용은 제안일 뿐입니다. 같은 사업·회차인지, 바뀌는 항목의 범위가 같은지, 새 값이 원문에 그대로 있는지 직접 확인한 경우에만 적용하세요.
+    적용하면 대상 장학의 새 버전(공개 전)이 생기고, 확인 후 장학 화면에서 공개합니다. 별개 공고라면 검토함에서 '검토 완료'를 누르세요.</p>
+</div></div>
+{% if not is_open %}<div class="notice">이 검토 항목은 이미 처리되었습니다({{ label('review_status', review.status) }}). 내용은 볼 수 있지만 적용할 수는 없습니다. <a href="/admin/reviews">검토함으로 돌아가기</a></div>{% endif %}
+{% if payload.ai_review and payload.ai_review.reason %}<div class="panel small"><span class="chip info">AI 2차 검토 의견</span> {{ payload.ai_review.reason }}{% if payload.ai_review.action_refused %}<div class="muted" style="margin-top:4px">{{ ACTION_REFUSED_HELP }} <span class="mono">{{ payload.ai_review.action_refused }}</span></div>{% endif %}</div>{% endif %}
 
-<div class="panel" style="margin-bottom:16px">
-  <h2>1. 대상 opportunity 선택</h2>
+<div class="panel">
+  <h2>1단계: 바뀔 장학 고르기</h2>
+  {% if candidates %}
   <form method="get" class="inline">
-    <select name="opportunity_id" required>
-      {% for row in candidates %}<option value="{{ row.id }}" {% if opportunity_id and row.id == opportunity_id %}selected{% endif %}>{{ row.title }} (v{{ row.version_no }}{% if row.academic_year %}, {{ row.academic_year }}{% endif %}, 유사도 {{ '%.2f'|format(row.score or 0) }})</option>{% endfor %}
+    <select name="opportunity_id" required aria-label="대상 장학">
+      {% for row in candidates %}<option value="{{ row.id }}" {% if opportunity_id and row.id == opportunity_id %}selected{% endif %}>{{ row.title }} (버전 {{ row.version_no }}{% if row.academic_year %}, {{ row.academic_year }}{% endif %}, 제목 유사도 {{ '%.2f'|format(row.score or 0) }})</option>{% endfor %}
     </select>
     <button>현재 값 보기</button>
   </form>
+  <p class="small muted">제목이 비슷한 순서입니다. 고르면 아래 왼쪽에 그 장학의 현재 값이 나옵니다.</p>
+  {% else %}<p class="muted">이 공고와 다른, 고를 수 있는 장학이 없습니다.</p>{% endif %}
 </div>
 
-<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(420px,1fr));gap:16px">
+<div class="cols">
   <div class="panel">
-    <h2>Before: 대상의 최신 version</h2>
+    <h2>지금 값 (고른 장학의 최신 버전)</h2>
     {% if before %}
-      <p><b>{{ before.version.title }}</b> · v{{ before.version.version_no }}{% if before.version.source_status_override %} · {{ before.version.source_status_override }}{% endif %}</p>
-      <div class="table-wrap"><table><thead><tr><th>window_key</th><th>종류</th><th>시작</th><th>마감</th><th>원문</th></tr></thead><tbody>
-      {% for w in before.windows %}<tr><td><code>{{ w.window_key }}</code></td><td>{{ w.window_kind }} {{ w.phase_label or '' }}</td><td>{{ w.start_date or '' }} {{ w.start_time or '' }}</td><td>{{ w.end_date or '' }} {{ w.end_time or '' }}</td><td>{{ w.raw_text or '' }}</td></tr>{% endfor %}
+      <p><a href="/admin/opportunities/{{ opportunity_id }}"><b>{{ before.version.title }}</b></a> · 버전 {{ before.version.version_no }}{% if before.version.source_status_override %} · {{ before.version.source_status_override }}{% endif %}</p>
+      <div class="table-wrap"><table><thead><tr><th>기간 key</th><th>종류</th><th>시작</th><th>마감</th><th>원문</th></tr></thead><tbody>
+      {% for w in before.windows %}<tr><td><code>{{ w.window_key }}</code></td><td>{{ label('window_kind', w.window_kind) }} {{ w.phase_label or '' }}</td><td>{{ w.start_date or '' }} {{ w.start_time or '' }}</td><td>{{ w.end_date or '' }} {{ w.end_time or '' }}</td><td>{{ w.raw_text or '' }}</td></tr>{% else %}<tr><td colspan="5" class="muted">신청 기간이 없습니다.</td></tr>{% endfor %}
       </tbody></table></div>
-      <h3>관련 근거</h3>
-      <div class="table-wrap"><table><thead><tr><th>evidence id</th><th>field</th><th>상태</th><th>값</th><th>인용</th></tr></thead><tbody>
-      {% for e in before.evidence %}<tr><td><code>{{ e.id }}</code></td><td>{{ e.field_path }}</td><td>{{ e.candidate_status }}</td><td class="json">{{ e.candidate_value|pretty_json }}</td><td class="json">{{ e.quote_text }}<br><span class="muted">{{ e.notice_title }}</span></td></tr>{% endfor %}
-      </tbody></table></div>
-    {% else %}<p class="muted">대상을 선택하면 현재 값과 근거가 표시된다.</p>{% endif %}
+      <details><summary>관련 근거 {{ before.evidence|length }}건</summary>
+      <div class="table-wrap"><table><thead><tr><th>근거 ID</th><th>항목</th><th>상태</th><th>값</th><th>인용</th></tr></thead><tbody>
+      {% for e in before.evidence %}<tr><td><code title="{{ e.id }}">{{ (e.id|string)[:8] }}</code></td><td title="{{ e.field_path }}">{{ field_label(e.field_path) }}</td><td>{{ e.candidate_status }}</td><td class="json">{{ e.candidate_value|pretty_json }}</td><td class="json">{{ e.quote_text }}<br><span class="muted">{{ e.notice_title }}</span></td></tr>{% endfor %}
+      </tbody></table></div></details>
+    {% else %}<p class="muted">1단계에서 장학을 고르면 현재 값과 근거가 여기에 나옵니다.</p>{% endif %}
   </div>
   <div class="panel">
-    <h2>After: 제안 ({{ payload.kind }}, confidence {{ payload.confidence }})</h2>
-    <h3>변경 표식 근거</h3>
-    {% for ref in payload.marker_evidence %}<p><code>{{ ref.block_id }}</code> “{{ ref.quote }}”<br><span class="muted">{{ evidence_blocks.get(ref.block_id) or '(block 없음)' }}</span></p>{% else %}<p class="bad">표식 근거 없음</p>{% endfor %}
-    <h3>같은 회차 근거</h3>
-    {% for ref in payload.same_cycle_evidence %}<p><code>{{ ref.block_id }}</code> “{{ ref.quote }}”</p>{% else %}<p class="bad">같은 회차 근거 없음</p>{% endfor %}
-    <h3>Patch 후보</h3>
-    {% for patch in payload.patches %}<div style="border-top:1px solid var(--line);padding-top:8px">
-      <p><b>{{ patch.field_path }}</b> ({{ patch.scope_key }})</p>
-      <p>이전 주장: <code>{{ patch.previous_value|pretty_json }}</code> → 새 값: <code>{{ patch.replacement_value|pretty_json }}</code></p>
-      {% for ref in patch.evidence %}<p><code>{{ ref.block_id }}</code> “{{ ref.quote }}”<br><span class="muted">{{ evidence_blocks.get(ref.block_id) or '(block 없음)' }}</span></p>{% endfor %}
-    </div>{% endfor %}
+    <h2>AI 제안: {{ KINDS.get(payload.kind, payload.kind) }} <span class="small muted">(확신 {{ {'high': '높음', 'medium': '보통', 'low': '낮음'}.get(payload.confidence, payload.confidence) }})</span></h2>
+    <h3>정정·연장임을 밝힌 문장</h3>
+    {% for ref in payload.marker_evidence %}<p>“{{ ref.quote }}”<br><span class="muted small">원문 블록: {{ evidence_blocks.get(ref.block_id) or '(블록을 찾지 못함)' }}</span></p>{% else %}<p class="bad">근거 문장이 없습니다. 원문에서 직접 찾아야 합니다.</p>{% endfor %}
+    <h3>같은 회차라는 근거</h3>
+    {% for ref in payload.same_cycle_evidence %}<p>“{{ ref.quote }}”</p>{% else %}<p class="bad">같은 회차라는 근거가 없습니다. 원문으로 확인하세요.</p>{% endfor %}
+    <h3>바뀌는 값</h3>
+    {% for patch in payload.patches %}<div class="item-line">
+      <p><b title="{{ patch.field_path }}">{{ field_label(patch.field_path) }}</b> <span class="small muted">{{ patch.field_path }}{% if patch.scope_key and patch.scope_key != 'main' %} · {{ patch.scope_key }}{% endif %}</span></p>
+      <p>이전: <code>{{ patch.previous_value|pretty_json }}</code> → 새 값: <code>{{ patch.replacement_value|pretty_json }}</code></p>
+      {% for ref in patch.evidence %}<p class="small">“{{ ref.quote }}”<br><span class="muted">원문 블록: {{ evidence_blocks.get(ref.block_id) or '(블록을 찾지 못함)' }}</span></p>{% endfor %}
+    </div>{% else %}<p class="muted">제안된 값 변경이 없습니다.</p>{% endfor %}
   </div>
 </div>
 
-{% if before and review.status in ['open', 'in_review'] %}
-<div class="panel" style="margin-top:16px">
-  <h2>2. 새 immutable version 생성</h2>
-  <p class="muted">지원 path: <code>/application_windows/&lt;window_key&gt;/end</code>·<code>/start</code> (값 <code>{"date":"2026-10-08","time":"17:00"}</code>), <code>/title</code>, <code>/summary</code>, <code>/source_status_override</code> (<code>"cancelled"</code> 등).
-  <code>supersedes_evidence_ids</code>를 생략하면 같은 field의 기존 근거가 자동 대체 대상이 된다.</p>
-  <form method="post" action="/admin/opportunities/{{ opportunity_id }}/revisions" style="display:grid;gap:8px;max-width:980px">
+{% if before and is_open and admin.role in ['reviewer','admin'] %}
+<div class="panel">
+  <h2>2단계: 확인하고 새 버전 만들기</h2>
+  <p class="small muted">아래 값은 AI 제안으로 채워져 있습니다. 대부분은 그대로 두고, 세 가지 확인란을 직접 확인한 뒤 체크하세요.
+    고칠 수 있는 항목: 신청 기간 <code>/application_windows/&lt;기간 key&gt;/end</code>·<code>/start</code> (값 예: <code>{"date":"2026-10-08","time":"17:00"}</code>), 제목 <code>/title</code>, 요약 <code>/summary</code>, 취소 등 상태 <code>/source_status_override</code> (값 예: <code>"cancelled"</code>).</p>
+  <form class="action" method="post" action="/admin/opportunities/{{ opportunity_id }}/revisions">
     <input type="hidden" name="csrf" value="{{ csrf }}">
     <input type="hidden" name="review_id" value="{{ review.id }}">
     <input type="hidden" name="notice_version_id" value="{{ review.entity_id }}">
     <input type="hidden" name="extraction_run_id" value="{{ run_id }}">
     <input type="hidden" name="extraction_item_path" value="{{ payload.extraction_item_path or '/revisions/0' }}">
-    <label>종류 <select name="kind">{% for kind in ['extension','correction','cancellation','reopened'] %}<option {% if payload.kind == kind %}selected{% endif %}>{{ kind }}</option>{% endfor %}</select></label>
+    <label class="field">종류 <select name="kind">{% for kind, text in KINDS.items() %}<option value="{{ kind }}" {% if payload.kind == kind %}selected{% endif %}>{{ text }}</option>{% endfor %}</select></label>
     {% set marker = (payload.marker_evidence or [{}])[0] %}
-    <label>변경 표식 block_id <input name="intent_block_id" value="{{ marker.block_id or '' }}" required size="40"></label>
-    <label>변경 표식 인용 <input name="intent_quote" value="{{ marker.quote or '' }}" required size="80"></label>
-    <label>Patches (JSON)
+    <label class="field">정정·연장임을 밝힌 문장의 블록 ID <input name="intent_block_id" value="{{ marker.block_id or '' }}" required size="40"></label>
+    <label class="field">그 문장 (원문 그대로) <input name="intent_quote" value="{{ marker.quote or '' }}" required size="80"></label>
+    <details><summary>바뀌는 값 (JSON) 직접 고치기</summary>
+    <label class="field">바뀌는 값 목록
       <textarea name="patches_json" rows="8" required>[{% for patch in payload.patches %}{"field_path": {{ patch.field_path|pretty_json }}, "scope_key": {{ patch.scope_key|pretty_json }}, "value": {{ patch.replacement_value|pretty_json }}, "block_id": {{ ((patch.evidence or [{}])[0].block_id or '')|pretty_json }}, "quote": {{ ((patch.evidence or [{}])[0].quote or '')|pretty_json }}}{% if not loop.last %},
 {% endif %}{% endfor %}]</textarea></label>
-    <label><input type="checkbox" name="same_cycle_verified"> 같은 사업·연도·회차임을 원문으로 확인했다</label>
-    <label><input type="checkbox" name="same_scope_verified"> 같은 접수 단계·대상·채널(field 범위)임을 확인했다</label>
-    <label><input type="checkbox" name="new_value_verified"> 새 값을 원문에서 직접 확인했다</label>
-    <textarea name="reason" placeholder="판단 근거 (선택)"></textarea>
-    <button>새 version 생성 (draft)</button>
+      <span class="small muted"><code>supersedes_evidence_ids</code>를 생략하면 같은 항목의 기존 근거를 자동으로 대체합니다.</span></details>
+    <label><input type="checkbox" name="same_cycle_verified" required> 같은 사업·연도·회차임을 원문으로 확인했습니다</label>
+    <label><input type="checkbox" name="same_scope_verified" required> 바뀌는 항목의 범위(접수 단계·대상·접수처)가 같음을 확인했습니다</label>
+    <label><input type="checkbox" name="new_value_verified" required> 새 값을 원문에서 직접 확인했습니다</label>
+    <textarea name="reason" rows="2" placeholder="판단 근거 (선택)"></textarea>
+    <button>새 버전 만들기 (공개 전)</button>
   </form>
 </div>
 {% endif %}

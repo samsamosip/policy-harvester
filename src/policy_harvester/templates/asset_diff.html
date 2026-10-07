@@ -1,5 +1,11 @@
-{% extends "base.html" %}{% block title %}Attachment diff · Policy Harvester{% endblock %}
-{% block content %}<h1>{{ title }} · 첨부/이미지 diff</h1><p class="muted">{{ labels[0] }} → {{ labels[1] }}</p>
-<div class="table-wrap"><table><thead><tr><th>상태</th><th>Occurrence</th><th>이전</th><th>현재</th></tr></thead><tbody>
-{% for row in rows %}<tr><td class="{% if row.state == 'changed' or row.state == 'removed' %}bad{% elif row.state == 'added' %}ok{% endif %}">{{ row.state }}</td><td><code>{{ row.occurrence_key }}</code></td><td class="json">{% if row.before %}<pre>{{ row.before|pretty_json(2) }}</pre>{% endif %}</td><td class="json">{% if row.after %}<pre>{{ row.after|pretty_json(2) }}</pre>{% endif %}</td></tr>{% endfor %}
+{% extends "base.html" %}{% block title %}첨부 비교 · Policy Harvester{% endblock %}
+{% block content %}<div class="page-head"><div><div class="crumbs"><a href="/admin/notices/{{ notice_id }}">← 공고로 돌아가기</a></div>
+  <h1>{{ title }}</h1><p class="lede">첨부 파일과 본문 이미지를 이전 수집본과 비교합니다. '내용 바뀜'은 파일 이름이 같아도 내용이 달라진 경우입니다.</p>
+  <p class="small muted">{{ labels[0] }} → {{ labels[1] }}</p></div></div>
+<div class="table-wrap"><table><thead><tr><th>변화</th><th>파일</th><th>이전</th><th>현재</th></tr></thead><tbody>
+{% for row in rows %}{% set item = row.after or row.before %}<tr><td>{{ chip('asset_state', row.state) }}</td>
+  <td>{{ item.original_filename or label('asset_role', item.role) }}<div class="sub">{{ label('asset_role', item.role) }}{% if item.download_status != 'succeeded' %} · {{ label('download', item.download_status) }}{% endif %}</div><code class="small" title="구분 key">{{ row.occurrence_key }}</code></td>
+  <td class="json">{% if row.before %}<details><summary>{{ ((row.before.byte_size or 0) / 1024)|round|int }} KB · 자세히</summary><pre>{{ row.before|pretty_json(2) }}</pre></details>{% else %}<span class="muted">없음</span>{% endif %}</td>
+  <td class="json">{% if row.after %}<details><summary>{{ ((row.after.byte_size or 0) / 1024)|round|int }} KB · 자세히</summary><pre>{{ row.after|pretty_json(2) }}</pre></details>{% else %}<span class="muted">없음</span>{% endif %}</td></tr>
+{% else %}<tr><td colspan="4" class="muted">첨부와 본문 이미지가 없습니다.</td></tr>{% endfor %}
 </tbody></table></div>{% endblock %}

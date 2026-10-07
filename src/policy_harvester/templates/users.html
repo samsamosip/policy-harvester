@@ -1,29 +1,34 @@
 {% extends "base.html" %}{% block title %}사용자 · Policy Harvester{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1>사용자</h1>
-  <p class="lede">관리자 화면 계정입니다. 역할: viewer(조회), operator(수집·재처리), reviewer(검토·수정), admin(설정·계정).</p></div></div>
-{% if created %}<div class="notice ok">계정을 만들었습니다: {{ created }}</div>{% endif %}
-{% if deleted %}<div class="notice ok">계정을 삭제했습니다: {{ deleted }}</div>{% endif %}
-{% if error %}<div class="notice">{{ error }}</div>{% endif %}
+  <p class="lede">관리자 화면에 로그인하는 계정입니다. 역할에 따라 할 수 있는 일이 다릅니다:
+    <b>조회</b>(보기만), <b>운영</b>(수집·재파싱·재추출·재시도), <b>검토</b>(운영 + 검토함 처리·공개·값 수정·병합), <b>관리자</b>(검토 + AI 설정·계정·API key).</p></div></div>
+{% if created %}<div class="notice ok">계정을 만들었습니다: {{ created }}. 정한 임시 비밀번호를 본인에게 전달하세요. 첫 로그인 때 새 비밀번호로 바꾸게 됩니다.</div>{% endif %}
+{% if deleted %}<div class="notice ok">계정을 삭제했습니다: {{ deleted }}. 이 계정으로는 더 이상 로그인할 수 없고, 같은 이메일로 새 계정을 만들 수 있습니다.</div>{% endif %}
+{% if error %}<div class="notice" role="alert">{{ error }}</div>{% endif %}
 {% if reset %}<section class="panel"><h2>임시 비밀번호: {{ reset.email }}</h2>
-  <p class="muted small">이 화면에서 한 번만 보입니다. 사용자에게 전달하세요. 다음 로그인 때 새 비밀번호로 바꿔야 하고, 기존 로그인 세션은 종료됐습니다.</p>
-  <div class="secret" aria-label="임시 비밀번호">{{ reset.password }}</div></section>{% endif %}
+  <div class="notice ok">이 비밀번호는 지금 한 번만 보입니다. 복사해서 본인에게 안전하게 전달하세요.</div>
+  <div class="secret" aria-label="임시 비밀번호">{{ reset.password }}</div>
+  <p class="muted small">이 계정은 다음 로그인 때 새 비밀번호를 정해야 하며, 이미 로그인되어 있던 곳은 모두 로그아웃되었습니다.</p></section>{% endif %}
 <section class="panel"><h2>계정 만들기</h2>
   <form class="fields" method="post" action="/admin/users"><input type="hidden" name="csrf" value="{{ csrf }}">
-    <label class="field">Email<input type="email" name="email" autocomplete="off" required></label>
+    <label class="field">이메일<input type="email" name="email" autocomplete="off" required></label>
     <label class="field">이름<input name="display_name" required></label>
-    <label class="field">역할<select name="role"><option>viewer</option><option>operator</option><option>reviewer</option><option>admin</option></select></label>
+    <label class="field">역할<select name="role">{% for role in ['viewer', 'operator', 'reviewer', 'admin'] %}<option value="{{ role }}">{{ label('role', role) }} ({{ role }})</option>{% endfor %}</select></label>
     <label class="field">임시 비밀번호 (12자 이상)<input type="password" name="password" minlength="12" autocomplete="new-password" required></label>
-    <button>계정 생성</button>
+    <button>계정 만들기</button>
   </form>
   <p class="muted small" style="margin:10px 0 0">새 계정은 첫 로그인 때 비밀번호를 직접 바꿔야 합니다.</p></section>
-<div class="table-wrap"><table><thead><tr><th>Email</th><th>이름</th><th>역할</th><th>마지막 로그인</th><th>생성</th><th></th></tr></thead><tbody>
-{% for row in rows %}<tr><td>{{ row.email }}</td><td>{{ row.display_name }}</td><td><span class="chip brand">{{ row.role }}</span>{% if row.password_change_required %} <span class="chip">비밀번호 변경 대기</span>{% endif %}</td>
-  <td class="num small">{{ row.last_login_at|kst or '—' }}</td><td class="num small">{{ row.created_at|kst }}</td>
+<div class="table-wrap"><table><thead><tr><th>이메일</th><th>이름</th><th>역할</th><th>마지막 로그인</th><th>만든 날</th><th></th></tr></thead><tbody>
+{% for row in rows %}<tr><td>{{ row.email }}{% if row.id == admin.id %} <span class="chip">나</span>{% endif %}</td><td>{{ row.display_name }}</td><td>{{ chip('role', row.role) }}{% if row.password_change_required %} <span class="chip warn" title="임시 비밀번호를 받은 뒤 아직 새 비밀번호를 정하지 않았습니다">비밀번호 변경 대기</span>{% endif %}</td>
+  <td class="num small">{{ row.last_login_at|kst or '로그인한 적 없음' }}</td><td class="num small">{{ row.created_at|kst }}</td>
   <td class="row-action">{% if row.id != admin.id %}<div class="row-actions">
-    <form class="inline" method="post" action="/admin/users/{{ row.id }}/reset-password"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small-btn">비밀번호 초기화</button></form>
-    <details class="confirm-delete"><summary title="계정 삭제" aria-label="{{ row.email }} 삭제">×</summary>
-      <form class="inline" method="post" action="/admin/users/{{ row.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="danger">삭제</button></form></details></div>
-  {%- else %}<a class="small" href="/admin/account">비밀번호 변경</a>{% endif %}</td></tr>
+    <details><summary>비밀번호 초기화…</summary>
+      <form class="action" method="post" action="/admin/users/{{ row.id }}/reset-password"><input type="hidden" name="csrf" value="{{ csrf }}">
+        <span class="small muted">임시 비밀번호를 새로 만들어 이 화면에 한 번 보여 줍니다. 지금 로그인된 곳은 모두 로그아웃됩니다.</span>
+        <button class="secondary small-btn">임시 비밀번호 만들기</button></form></details>
+    <details class="confirm-delete"><summary title="계정 삭제" aria-label="{{ row.email }} 계정 삭제">×</summary>
+      <form class="inline" method="post" action="/admin/users/{{ row.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="danger" title="{{ row.email }} 계정을 삭제합니다. 되돌릴 수 없습니다.">이 계정 삭제</button></form></details></div>
+  {%- else %}<a class="small" href="/admin/account">내 비밀번호 변경</a>{% endif %}</td></tr>
 {% endfor %}</tbody></table></div>
 {% endblock %}

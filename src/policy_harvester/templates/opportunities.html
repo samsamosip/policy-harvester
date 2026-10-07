@@ -2,7 +2,7 @@
 {% macro qs(overrides) %}{% set merged = dict(filters, **overrides) %}?{% for key, value in merged.items() if value %}{{ key }}={{ value|string|urlencode }}{% if not loop.last %}&{% endif %}{% endfor %}{% endmacro %}
 {% block content %}
 <div class="page-head">
-  <div><h1>장학 목록</h1><p class="lede">공고에서 AI로 추출한 장학 항목입니다. 한 공고에 장학이 여럿이면 각각 나옵니다. 행을 누르면 원문 근거와 함께 상세를 봅니다.</p></div>
+  <div><h1>장학 목록</h1><p class="lede">공고에서 AI로 추출한 장학입니다. 한 공고에 장학이 여럿이면 각각 나옵니다. 이름을 누르면 원문 근거와 함께 자세히 보고, 공개·수정할 수 있습니다.</p></div>
   <div class="muted num">{{ total }}건</div>
 </div>
 
@@ -32,14 +32,14 @@
   {% for row in rows %}
   <tr>
     <td style="min-width:260px"><a class="title" href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.title }}</a>
-      <div class="sub">{{ row.provider_name or '기관 미상' }}{% if row.academic_year %} · {{ row.academic_year }}{% endif %}{% if row.version_no > 1 %} · v{{ row.version_no }}{% endif %}</div></td>
+      <div class="sub">{{ row.provider_name or '기관 미상' }}{% if row.academic_year %} · {{ row.academic_year }}{% endif %}{% if row.version_no > 1 %} · 버전 {{ row.version_no }}{% endif %}</div></td>
     <td class="num" style="white-space:nowrap"><span class="chip {{ row.deadline.kind }}">{{ row.deadline.label }}</span><div class="sub">{{ row.deadline.date or '' }}</div></td>
     <td class="num">{{ row.benefit or '—' }}</td>
     <td class="num">{% if row.selection_capacity is not none %}{{ row.selection_capacity }}명{% else %}<span class="muted">—</span>{% endif %}</td>
     <td style="white-space:nowrap">
       {% if row.live %}<span class="chip ok">공개 중</span>{% else %}<span class="chip">공개 전</span>{% endif %}
       {% if row.data_quality_status == 'complete' %}<span class="chip ok">완전</span>{% elif row.data_quality_status == 'partial' %}<span class="chip warn">일부 불완전</span>{% else %}<span class="chip bad">검토 필요</span>{% endif %}
-      {% if row.open_reviews %}<div class="sub"><a href="/admin/opportunities/{{ row.opportunity_id }}#reviews">검토 {{ row.open_reviews }}건</a></div>{% endif %}
+      {% if row.open_reviews %}<div class="sub"><a href="/admin/opportunities/{{ row.opportunity_id }}#reviews">검토 대기 {{ row.open_reviews }}건</a></div>{% endif %}
     </td>
     <td style="max-width:320px">{% if row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}">{{ row.notice_title }}</a>{% if row.source_count > 1 %}<div class="sub">외 {{ row.source_count - 1 }}건</div>{% endif %}{% endif %}</td>
   </tr>
