@@ -95,8 +95,24 @@ LOGIN_ATTEMPTS: dict[str, deque[float]] = defaultdict(deque)
 Session = Annotated[AsyncSession, Depends(get_session)]
 
 
-def _session_cookie(user_id: uuid.UUID, csrf: str) -> str:
-    return serializer.dumps({"uid": str(user_id), "csrf": csrf})
+def _password_stamp(changed_at: Any) -> str:
+    """Sessions record when the password last changed; a reset or change ends older sessions."""
+    return changed_at.isoformat() if changed_at else ""
+
+
+def _session_cookie(user_id: uuid.UUID, csrf: str, changed_at: Any = None) -> str:
+    return serializer.dumps({"uid": str(user_id), "csrf": csrf, "pw": _password_stamp(changed_at)})
+
+
+def _set_session(response: Response, user_id: uuid.UUID, changed_at: Any) -> None:
+    response.set_cookie("policy_admin", _session_cookie(user_id, secrets.token_urlsafe(24), changed_at),
+                        httponly=True, secure=settings.app_env != "local", samesite="strict",
+                        max_age=12 * 60 * 60)
+
+
+MIN_PASSWORD_LENGTH = 12
+# While a temporary password is in use, only these pages are reachable.
+PASSWORD_CHANGE_PATHS = ("/admin/account", "/admin/logout")
 
 
 async def current_admin(request: Request, session: Session) -> dict[str, Any]:
@@ -109,11 +125,13 @@ async def current_admin(request: Request, session: Session) -> dict[str, Any]:
     except (BadSignature, SignatureExpired, KeyError, ValueError) as exc:
         raise HTTPException(303, headers={"Location": "/admin/login"}) from exc
     row = (await session.execute(text("""
-        SELECT id, email, display_name, role FROM inha_policy.admin_users
-        WHERE id=:id AND is_active
+        SELECT id, email, display_name, role, password_change_required, password_changed_at
+        FROM inha_policy.admin_users WHERE id=:id AND is_active
     """), {"id": user_id})).mappings().one_or_none()
-    if row is None:
+    if row is None or payload.get("pw", "") != _password_stamp(row["password_changed_at"]):
         raise HTTPException(303, headers={"Location": "/admin/login"})
+    if row["password_change_required"] and not request.url.path.startswith(PASSWORD_CHANGE_PATHS):
+        raise HTTPException(303, headers={"Location": "/admin/account"})
     # Badge counts for the side navigation on every page.
     nav = dict((await session.execute(text("""
         SELECT
@@ -193,8 +211,8 @@ async def login(request: Request, session: Session, email: Annotated[str, Form()
         raise HTTPException(429, "too many login attempts")
     attempts.append(now)
     row = (await session.execute(text("""
-        SELECT id, password_hash FROM inha_policy.admin_users
-        WHERE email=:email AND is_active
+        SELECT id, password_hash, password_change_required, password_changed_at
+        FROM inha_policy.admin_users WHERE email=:email AND is_active
     """), {"email": email.strip().lower()})).mappings().one_or_none()
     try:
         valid = bool(row and row["password_hash"] and passwords.verify(row["password_hash"], password))
@@ -203,14 +221,51 @@ async def login(request: Request, session: Session, email: Annotated[str, Form()
     if not valid:
         return templates.TemplateResponse(request, "login.html", {"error": "로그인 정보가 올바르지 않습니다."}, status_code=401)
     attempts.clear()
-    csrf = secrets.token_urlsafe(24)
     await session.execute(text(
         "UPDATE inha_policy.admin_users SET last_login_at=now() WHERE id=:id"
     ), {"id": row["id"]})
     await session.commit()
-    response = RedirectResponse("/admin", status_code=303)
-    response.set_cookie("policy_admin", _session_cookie(row["id"], csrf), httponly=True,
-                        secure=settings.app_env != "local", samesite="strict", max_age=12 * 60 * 60)
+    response = RedirectResponse("/admin/account" if row["password_change_required"] else "/admin",
+                                status_code=303)
+    _set_session(response, row["id"], row["password_changed_at"])
+    return response
+
+
+@router.get("/account", response_class=HTMLResponse)
+async def account_page(request: Request, admin: Viewer) -> HTMLResponse:
+    return templates.TemplateResponse(request, "account.html", _context(
+        request, admin, changed=request.query_params.get("changed"),
+        error=request.query_params.get("error")))
+
+
+@router.post("/account/password")
+async def change_password(request: Request, session: Session, admin: Viewer) -> RedirectResponse:
+    form = await _form(request, admin)
+    current, new = str(form.get("current_password", "")), str(form.get("new_password", ""))
+    stored = (await session.execute(text(
+        "SELECT password_hash FROM inha_policy.admin_users WHERE id=:id FOR UPDATE"
+    ), {"id": admin["id"]})).scalar_one()
+    try:
+        valid = bool(stored and passwords.verify(stored, current))
+    except VerifyMismatchError:
+        valid = False
+    problem = ("현재 비밀번호가 올바르지 않습니다" if not valid else
+               f"새 비밀번호는 {MIN_PASSWORD_LENGTH}자 이상이어야 합니다" if len(new) < MIN_PASSWORD_LENGTH else
+               "새 비밀번호 확인이 일치하지 않습니다" if new != str(form.get("confirm_password", "")) else
+               "현재 비밀번호와 다른 비밀번호를 쓰세요" if new == current else None)
+    if problem:
+        return RedirectResponse(f"/admin/account?{urlencode({'error': problem})}", status_code=303)
+    changed_at = (await session.execute(text("""
+        UPDATE inha_policy.admin_users SET password_hash=:hash, password_change_required=false,
+          password_changed_at=clock_timestamp(), updated_at=now()
+        WHERE id=:id RETURNING password_changed_at
+    """), {"id": admin["id"], "hash": passwords.hash(new)})).scalar_one()
+    await _audit(session, admin, "admin_password_changed", "admin_user", str(admin["id"]),
+                 reason="self-service")
+    await session.commit()
+    # Other sessions of this account end; this one continues with a fresh cookie.
+    response = RedirectResponse("/admin/account?changed=1", status_code=303)
+    _set_session(response, admin["id"], changed_at)
     return response
 
 
@@ -1780,14 +1835,15 @@ async def search_debug(request: Request, session: Session, admin: Viewer,
 
 
 @router.get("/users", response_class=HTMLResponse)
-async def users_page(request: Request, session: Session, admin: Admin) -> HTMLResponse:
+async def users_page(request: Request, session: Session, admin: Admin,
+                     reset: dict[str, str] | None = None) -> HTMLResponse:
     rows = (await session.execute(text("""
-        SELECT id, email, display_name, role, is_active, last_login_at, created_at
+        SELECT id, email, display_name, role, is_active, password_change_required, last_login_at, created_at
         FROM inha_policy.admin_users WHERE deleted_at IS NULL ORDER BY email
     """))).mappings().all()
     return templates.TemplateResponse(request, "users.html", _context(
         request, admin, rows=rows, created=request.query_params.get("created"),
-        deleted=request.query_params.get("deleted"), error=request.query_params.get("error")))
+        deleted=request.query_params.get("deleted"), error=request.query_params.get("error"), reset=reset))
 
 
 @router.post("/users")
@@ -1800,7 +1856,7 @@ async def create_user(request: Request, session: Session, admin: Admin) -> Redir
     problem = ("email 형식이 올바르지 않습니다" if "@" not in email else
                "이름을 입력하세요" if not display_name else
                "역할을 다시 선택하세요" if role not in ROLE_LEVEL else
-               "비밀번호는 12자 이상이어야 합니다" if len(password) < 12 else None)
+               f"비밀번호는 {MIN_PASSWORD_LENGTH}자 이상이어야 합니다" if len(password) < MIN_PASSWORD_LENGTH else None)
     if problem is None and (await session.execute(text(
             "SELECT 1 FROM inha_policy.admin_users WHERE email=:email"), {"email": email})).first():
         problem = f"{email} 계정이 이미 있습니다"
@@ -1809,8 +1865,8 @@ async def create_user(request: Request, session: Session, admin: Admin) -> Redir
     user_id = uuid.uuid4()
     await session.execute(text("""
         INSERT INTO inha_policy.admin_users
-          (id, email, display_name, password_hash, role)
-        VALUES (:id, :email, :name, :password, :role)
+          (id, email, display_name, password_hash, role, password_change_required)
+        VALUES (:id, :email, :name, :password, :role, true)
     """), {"id": user_id, "email": email, "name": display_name,
              "password": passwords.hash(password), "role": role})
     await _audit(session, admin, "admin_user_created", "admin_user", str(user_id),
@@ -1818,6 +1874,27 @@ async def create_user(request: Request, session: Session, admin: Admin) -> Redir
                  reason="user administration")
     await session.commit()
     return RedirectResponse(f"/admin/users?{urlencode({'created': email})}", status_code=303)
+
+
+@router.post("/users/{user_id}/reset-password", response_class=HTMLResponse)
+async def reset_password(user_id: uuid.UUID, request: Request, session: Session, admin: Admin) -> Response:
+    """Give an account a temporary password, shown once here; it must be changed at next sign-in."""
+    await _form(request, admin)
+    if user_id == admin["id"]:
+        return RedirectResponse(f"/admin/users?{urlencode({'error': '자기 비밀번호는 내 계정에서 변경하세요'})}",
+                                status_code=303)
+    temporary = secrets.token_urlsafe(12)
+    email = (await session.execute(text("""
+        UPDATE inha_policy.admin_users SET password_hash=:hash, password_change_required=true,
+          password_changed_at=clock_timestamp(), updated_at=now()
+        WHERE id=:id AND deleted_at IS NULL RETURNING email
+    """), {"id": user_id, "hash": passwords.hash(temporary)})).scalar_one_or_none()
+    if email is None:
+        raise HTTPException(404)
+    await _audit(session, admin, "admin_password_reset", "admin_user", str(user_id),
+                 after={"email": email, "password_change_required": True}, reason="user administration")
+    await session.commit()
+    return await users_page(request, session, admin, reset={"email": email, "password": temporary})
 
 
 @router.post("/users/{user_id}/delete")

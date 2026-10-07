@@ -38,6 +38,7 @@
     .side .badge.bad { background: #ef6b5a; color: #fff }
     .side .me { border-top: 1px solid rgba(255,255,255,.12); margin-top: 22px; padding: 14px 10px 0; font-size: 12px }
     .side .me form { margin-top: 8px }
+    .side .me a.me-link { color: inherit; text-decoration: none } .side .me a.me-link:hover { text-decoration: underline }
     .side .me button { background: transparent; border: 1px solid rgba(255,255,255,.25); color: var(--nav-ink); padding: 4px 10px; font-size: 12px }
 
     main { padding: 24px 32px 48px; min-width: 0 }
@@ -90,13 +91,20 @@
     button.secondary, .btn.secondary { background: #fff; color: var(--ink); border-color: #c9d1db }
     button.danger { background: var(--bad); border-color: var(--bad) }
     main form.inline { display: inline-flex; gap: 6px; align-items: center; flex-wrap: wrap }
+    /* Buttons keep their label on one line: td's overflow-wrap would otherwise let a narrow
+       column break "비활성화" into a tall stack of single characters. */
+    button, .btn { white-space: nowrap; overflow-wrap: normal; word-break: keep-all }
+    button.small-btn { padding: 4px 10px; font-size: 13px }
     td.row-action { width: 1%; white-space: nowrap; text-align: right }
-    details.confirm-delete { display: inline-flex; align-items: center; gap: 6px; flex-direction: row-reverse }
-    details.confirm-delete > summary { list-style: none; cursor: pointer; width: 28px; height: 28px; display: inline-grid;
+    .row-actions { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end }
+    /* x opens a "삭제" button beside it, so one stray click deletes nothing. */
+    details.confirm-delete { position: relative; display: inline-block }
+    details.confirm-delete > summary { list-style: none; cursor: pointer; width: 28px; height: 28px; display: grid;
       place-items: center; border-radius: 6px; color: var(--muted); font-size: 18px; line-height: 1 }
     details.confirm-delete > summary::-webkit-details-marker { display: none }
     details.confirm-delete > summary:hover, details.confirm-delete[open] > summary { background: #fdecec; color: var(--bad) }
-    details.confirm-delete button.danger { padding: 4px 10px; font-size: 13px }
+    details.confirm-delete > form { position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); z-index: 2 }
+    details.confirm-delete button.danger { padding: 4px 10px; font-size: 13px; box-shadow: 0 2px 8px rgba(0,0,0,.15) }
     details > summary { cursor: pointer; color: var(--brand) }
     .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px }
     .tabs a { padding: 5px 12px; border-radius: 16px; border: 1px solid var(--line); background: #fff; color: var(--ink-2); font-size: 13px }
@@ -143,7 +151,7 @@
     {{ item('/admin/table/audit', '감사 로그') }}
     {% endif %}
     <a class="item" href="/docs" target="_blank" rel="noopener"><span>API 문서 (Swagger)</span><span aria-hidden="true">↗</span></a>
-    <div class="me">{{ admin.display_name }} · {{ admin.role }}<div class="muted small">{{ admin.email }}</div>
+    <div class="me"><a class="me-link" href="/admin/account">{{ admin.display_name }} · {{ admin.role }}</a><div class="muted small">{{ admin.email }}</div>
       <form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button>로그아웃</button></form></div>
   </nav>
   <main>{% block content %}{% endblock %}</main>

@@ -227,6 +227,8 @@ class Worker:
             await session.execute(text("""
                 UPDATE inha_policy.crawl_jobs SET status='retry', available_at=now(),
                   locked_at=NULL, heartbeat_at=now(), worker_id=NULL,
+                  -- a shutdown (redeploy, scale-down) is not the job's failure: give the attempt back
+                  attempt_count=greatest(attempt_count - 1, 0),
                   error_code='CancelledError', error_message='worker interrupted'
                 WHERE id=:id
             """), {"id": job["id"]})

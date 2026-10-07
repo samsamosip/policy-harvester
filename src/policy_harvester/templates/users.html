@@ -5,6 +5,9 @@
 {% if created %}<div class="notice ok">계정을 만들었습니다: {{ created }}</div>{% endif %}
 {% if deleted %}<div class="notice ok">계정을 삭제했습니다: {{ deleted }}</div>{% endif %}
 {% if error %}<div class="notice">{{ error }}</div>{% endif %}
+{% if reset %}<section class="panel"><h2>임시 비밀번호: {{ reset.email }}</h2>
+  <p class="muted small">이 화면에서 한 번만 보입니다. 사용자에게 전달하세요. 다음 로그인 때 새 비밀번호로 바꿔야 하고, 기존 로그인 세션은 종료됐습니다.</p>
+  <div class="secret" aria-label="임시 비밀번호">{{ reset.password }}</div></section>{% endif %}
 <section class="panel"><h2>계정 만들기</h2>
   <form class="fields" method="post" action="/admin/users"><input type="hidden" name="csrf" value="{{ csrf }}">
     <label class="field">Email<input type="email" name="email" autocomplete="off" required></label>
@@ -12,11 +15,15 @@
     <label class="field">역할<select name="role"><option>viewer</option><option>operator</option><option>reviewer</option><option>admin</option></select></label>
     <label class="field">임시 비밀번호 (12자 이상)<input type="password" name="password" minlength="12" autocomplete="new-password" required></label>
     <button>계정 생성</button>
-  </form></section>
+  </form>
+  <p class="muted small" style="margin:10px 0 0">새 계정은 첫 로그인 때 비밀번호를 직접 바꿔야 합니다.</p></section>
 <div class="table-wrap"><table><thead><tr><th>Email</th><th>이름</th><th>역할</th><th>마지막 로그인</th><th>생성</th><th></th></tr></thead><tbody>
-{% for row in rows %}<tr><td>{{ row.email }}</td><td>{{ row.display_name }}</td><td><span class="chip brand">{{ row.role }}</span></td>
+{% for row in rows %}<tr><td>{{ row.email }}</td><td>{{ row.display_name }}</td><td><span class="chip brand">{{ row.role }}</span>{% if row.password_change_required %} <span class="chip">비밀번호 변경 대기</span>{% endif %}</td>
   <td class="num small">{{ row.last_login_at|kst or '—' }}</td><td class="num small">{{ row.created_at|kst }}</td>
-  <td class="row-action">{% if row.id != admin.id %}<details class="confirm-delete"><summary title="계정 삭제" aria-label="{{ row.email }} 삭제">×</summary>
-    <form class="inline" method="post" action="/admin/users/{{ row.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="danger">삭제</button></form></details>{% else %}<span class="muted small">본인</span>{% endif %}</td></tr>
+  <td class="row-action">{% if row.id != admin.id %}<div class="row-actions">
+    <form class="inline" method="post" action="/admin/users/{{ row.id }}/reset-password"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="secondary small-btn">비밀번호 초기화</button></form>
+    <details class="confirm-delete"><summary title="계정 삭제" aria-label="{{ row.email }} 삭제">×</summary>
+      <form class="inline" method="post" action="/admin/users/{{ row.id }}/delete"><input type="hidden" name="csrf" value="{{ csrf }}"><button class="danger">삭제</button></form></details></div>
+  {%- else %}<a class="small" href="/admin/account">비밀번호 변경</a>{% endif %}</td></tr>
 {% endfor %}</tbody></table></div>
 {% endblock %}

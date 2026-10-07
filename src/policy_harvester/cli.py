@@ -37,7 +37,7 @@ async def init_database(email: str, display_name: str) -> None:
             VALUES (:email, :name, :password, 'admin')
             ON CONFLICT (email) DO UPDATE SET display_name=EXCLUDED.display_name,
               password_hash=EXCLUDED.password_hash, role='admin', is_active=true,
-              updated_at=now()
+              password_change_required=false, password_changed_at=clock_timestamp(), updated_at=now()
         """), {"email": email.lower(), "name": display_name, "password": digest})
         await session.commit()
 
