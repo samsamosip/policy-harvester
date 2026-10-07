@@ -3,7 +3,7 @@
 {% block content %}
 <div class="page-head">
   <div><h1>공고 목록</h1><p class="lede">인하대 장학 게시판에서 수집한 게시글입니다. 게시글마다 첨부 파싱, AI 추출, 생성된 장학 수를 보여줍니다.</p></div>
-  <div class="muted num">{{ total }}건</div>
+  <div class="count num">{{ total }}건</div>
 </div>
 <div class="tabs" aria-label="처리 단계">
   {% for value, label in [('', '전체'), ('parsing', '파싱 중'), ('extract_wait', 'AI 추출 대기'), ('done', '추출 완료'), ('failed', '실패 있음')] %}
@@ -20,18 +20,18 @@
   <button>적용</button>
 </form>
 {% if rows %}
-<div class="table-wrap"><table>
-  <thead><tr><th>게시글</th><th>게시일</th><th>첨부</th><th>파싱</th><th>AI 추출</th><th>장학</th></tr></thead>
+<div class="table-wrap"><table class="cards">
+  <thead><tr><th>게시글</th><th>게시일</th><th class="r">첨부</th><th>파싱</th><th>AI 추출</th><th class="r">장학</th></tr></thead>
   <tbody>
   {% for row in rows %}
   <tr>
-    <td style="min-width:320px"><a class="title" href="/admin/notices/{{ row.id }}">{{ row.title }}</a>
+    <td class="main"><a class="title" href="/admin/notices/{{ row.id }}">{{ row.title }}</a>
       <div class="sub">{{ row.category_name or '' }}{% if row.scope_status != 'included' %} · <span class="chip">범위 밖</span>{% endif %}{% if row.revision_no > 1 %} · 수정 {{ row.revision_no - 1 }}회{% endif %} · <a href="{{ row.canonical_url }}" rel="noreferrer">원문 ↗</a></div></td>
-    <td class="num" style="white-space:nowrap">{{ row.published_on or '' }}</td>
-    <td class="num">{{ row.attachments }}</td>
-    <td style="white-space:nowrap">{% if row.failed %}<span class="chip bad">실패 {{ row.failed }}</span>{% elif row.pending %}<span class="chip info">대기 {{ row.pending }}</span>{% else %}<span class="chip ok">완료</span>{% endif %}</td>
-    <td style="white-space:nowrap">{% if row.scope_status != 'included' %}<span class="muted small">대상 아님</span>{% elif row.extraction_status == 'succeeded' %}<span class="chip ok">완료</span>{% elif row.extraction_status == 'failed' %}<span class="chip bad">실패</span>{% elif row.extraction_status == 'running' %}<span class="chip info">실행 중</span>{% else %}<span class="chip">대기</span>{% endif %}</td>
-    <td class="num">{% if row.opportunities %}<a href="/admin/notices/{{ row.id }}#opportunities">{{ row.opportunities }}개</a>{% else %}<span class="muted">—</span>{% endif %}</td>
+    <td class="num nowrap">{{ row.published_on or '' }}</td>
+    <td class="num r" data-label="첨부">{{ row.attachments }}</td>
+    <td class="nowrap" data-label="파싱">{% if row.failed %}<span class="chip bad">실패 {{ row.failed }}</span>{% elif row.pending %}<span class="chip info">대기 {{ row.pending }}</span>{% else %}<span class="chip ok">완료</span>{% endif %}</td>
+    <td class="nowrap" data-label="AI 추출">{% if row.scope_status != 'included' %}<span class="muted small">대상 아님</span>{% elif row.extraction_status == 'succeeded' %}<span class="chip ok">완료</span>{% elif row.extraction_status == 'failed' %}<span class="chip bad">실패</span>{% elif row.extraction_status == 'running' %}<span class="chip info">실행 중</span>{% else %}<span class="chip">대기</span>{% endif %}</td>
+    <td class="num nowrap r" data-label="장학">{% if row.opportunities %}<a href="/admin/notices/{{ row.id }}#opportunities">{{ row.opportunities }}개</a>{% else %}<span class="muted">—</span>{% endif %}</td>
   </tr>
   {% endfor %}
   </tbody>

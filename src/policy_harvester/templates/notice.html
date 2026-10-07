@@ -26,10 +26,10 @@
     </section>
     <section class="panel" id="opportunities">
       <h2>이 공고에서 나온 장학</h2>
-      {% for row in opportunities %}<div style="display:flex;justify-content:space-between;gap:10px;padding:7px 0;border-bottom:1px solid var(--line-2)">
+      {% if opportunities %}<div class="rows">{% for row in opportunities %}<div class="row">
         <a href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.title }}</a>
-        <span style="white-space:nowrap">{% if row.relation_kind != 'original' %}<span class="chip info">{{ row.relation_kind }}</span> {% endif %}<span class="chip {{ 'ok' if row.data_quality_status == 'complete' else ('warn' if row.data_quality_status == 'partial' else 'bad') }}">{{ {'complete': '완전', 'partial': '일부 불완전', 'needs_review': '검토 필요'}[row.data_quality_status] }}</span></span></div>
-      {% else %}<p class="muted">{% if notice.scope_status != 'included' %}범위 밖 공고라 AI 추출을 하지 않습니다.{% else %}아직 추출된 장학이 없습니다.{% endif %}</p>{% endfor %}
+        <span class="end nowrap">{% if row.relation_kind != 'original' %}<span class="chip info">{{ row.relation_kind }}</span> {% endif %}<span class="chip {{ 'ok' if row.data_quality_status == 'complete' else ('warn' if row.data_quality_status == 'partial' else 'bad') }}">{{ {'complete': '완전', 'partial': '일부 불완전', 'needs_review': '검토 필요'}[row.data_quality_status] }}</span></span></div>
+      {% endfor %}</div>{% else %}<p class="muted">{% if notice.scope_status != 'included' %}범위 밖 공고라 AI 추출을 하지 않습니다.{% else %}아직 추출된 장학이 없습니다.{% endif %}</p>{% endif %}
       {% if reviews %}<h3>검토 항목</h3>{% for review in reviews %}<div class="small">{{ review_labels.get(review.review_kind, review.review_kind) }} · {{ review.status }} · <a href="/admin/reviews">검토함</a></div>{% endfor %}{% endif %}
     </section>
   </div>
@@ -37,56 +37,56 @@
   <section>
     <h2>본문과 첨부 파싱 결과</h2>
     <div class="table-wrap"><table>
-      <thead><tr><th>문서</th><th>파서</th><th>결과</th><th>block</th><th></th></tr></thead>
+      <thead><tr><th>문서</th><th>파서</th><th>결과</th><th class="r">block</th><th><span class="sr-only">작업</span></th></tr></thead>
       <tbody>
       {% for doc in documents %}
       <tr>
-        <td><a class="title" href="/admin/documents/{{ doc.id }}">{{ doc.original_filename or ('본문 이미지' if doc.role == 'inline_image' else '게시글 본문') }}</a><div class="sub">{{ {'attachment': '첨부', 'inline_image': '본문 이미지'}.get(doc.role, '본문 HTML') }}{% if doc.byte_size %} · {{ (doc.byte_size / 1024)|round|int }} KB{% endif %}</div></td>
-        <td class="small">{{ doc.parser_name }} <span class="muted">{{ doc.parser_version }}</span></td>
+        <td class="main"><a class="title" href="/admin/documents/{{ doc.id }}">{{ doc.original_filename or ('본문 이미지' if doc.role == 'inline_image' else '게시글 본문') }}</a><div class="sub">{{ {'attachment': '첨부', 'inline_image': '본문 이미지'}.get(doc.role, '본문 HTML') }}{% if doc.byte_size %} · {{ (doc.byte_size / 1024)|round|int }} KB{% endif %}</div></td>
+        <td class="small nowrap">{{ doc.parser_name }} <span class="muted">{{ doc.parser_version }}</span></td>
         <td><span class="chip {{ 'ok' if doc.status == 'succeeded' else ('warn' if doc.status == 'partial' else 'bad') }}">{{ doc.status }}</span>{% for flag in doc.quality_flags %} <span class="chip">{{ {'llm_transcription': 'LLM 전사', 'scanned_pages': '스캔 페이지', 'hwp5txt_recovered_lines': '누락 줄 복구'}.get(flag, flag) }}</span>{% endfor %}</td>
-        <td class="num">{{ doc.blocks }}</td>
-        <td style="white-space:nowrap">{% if doc.binary_asset_id %}<a href="/admin/assets/{{ doc.binary_asset_id }}/download">원본</a>{% endif %}
-          {% if admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/documents/{{ doc.id }}/reprocess"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재파싱" placeholder="사유 (선택)"><button class="secondary">재파싱</button></form>{% endif %}</td>
+        <td class="num r">{{ doc.blocks }}</td>
+        <td class="row-action"><div class="row-actions">{% if doc.binary_asset_id %}<a class="btn-link" href="/admin/assets/{{ doc.binary_asset_id }}/download">원본</a>{% endif %}
+          {% if admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/documents/{{ doc.id }}/reprocess"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재파싱" placeholder="사유 (선택)"><button class="secondary">재파싱</button></form>{% endif %}</div></td>
       </tr>
-      {% else %}<tr><td colspan="5" class="muted">파싱된 문서가 없습니다.</td></tr>{% endfor %}
+      {% else %}<tr><td colspan="5" class="muted empty">파싱된 문서가 없습니다.</td></tr>{% endfor %}
       </tbody>
     </table></div>
     {% set unparsed = assets|selectattr('download_status', 'ne', 'succeeded')|list %}
     {% if unparsed %}<p class="small bad">내려받지 못한 첨부: {% for asset in unparsed %}{{ asset.original_filename or asset.role }} ({{ asset.download_status }}){% if not loop.last %}, {% endif %}{% endfor %}</p>{% endif %}
   </section>
 
-  {% if body %}<details class="panel"><summary>파싱된 본문 텍스트 보기</summary><pre style="white-space:pre-wrap;margin:12px 0 0">{{ body }}</pre></details>{% endif %}
+  {% if body %}<details class="panel"><summary>파싱된 본문 텍스트 보기</summary><pre>{{ body }}</pre></details>{% endif %}
 
   <div class="cols">
     <section>
       <h2>AI 추출 실행</h2>
-      <div class="table-wrap"><table><thead><tr><th>시작</th><th>결과</th><th>prompt</th><th>토큰(입력/출력)</th></tr></thead><tbody>
-      {% for run in runs %}<tr><td class="num small">{{ run.started_at.strftime('%m-%d %H:%M') if run.started_at else '' }}</td>
+      <div class="table-wrap"><table><thead><tr><th>시작</th><th>결과</th><th>prompt</th><th class="r">토큰(입력/출력)</th></tr></thead><tbody>
+      {% for run in runs %}<tr><td class="date small">{{ run.started_at.strftime('%m-%d %H:%M') if run.started_at else '' }}</td>
         <td><span class="chip {{ 'ok' if run.status == 'succeeded' else ('bad' if run.status == 'failed' else 'info') }}">{{ run.status }}</span>{% if run.error_code %}<div class="sub bad">{{ run.error_code }}</div>{% endif %}</td>
-        <td class="small">{{ run.prompt_version }}</td><td class="num small">{{ run.input_tokens or '' }} / {{ run.output_tokens or '' }}</td></tr>
-      {% else %}<tr><td colspan="4" class="muted">실행 기록 없음</td></tr>{% endfor %}
+        <td class="small">{{ run.prompt_version }}</td><td class="num small nowrap r">{{ run.input_tokens or '' }} / {{ run.output_tokens or '' }}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted empty">실행 기록 없음</td></tr>{% endfor %}
       </tbody></table></div>
     </section>
     <section>
       <h2>LLM 요청·응답 원본</h2>
-      <div class="table-wrap"><table><thead><tr><th>시각</th><th>용도</th><th>모델</th><th>결과</th><th>시간</th><th>토큰</th></tr></thead><tbody>
-      {% for x in exchanges %}<tr><td class="num small"><a href="/admin/llm-exchanges/{{ x.id }}">{{ x.started_at.strftime('%m-%d %H:%M:%S') }}</a></td>
+      <div class="table-wrap"><table><thead><tr><th>시각</th><th>용도</th><th>모델</th><th>결과</th><th class="r">시간</th><th class="r">토큰</th></tr></thead><tbody>
+      {% for x in exchanges %}<tr><td class="date small"><a href="/admin/llm-exchanges/{{ x.id }}">{{ x.started_at.strftime('%m-%d %H:%M:%S') }}</a></td>
         <td class="small">{{ {'extraction': 'AI 추출', 'repair': 'JSON 수리', 'transcription': '이미지 전사'}.get(x.purpose, x.purpose) }}</td>
         <td class="small">{{ x.model_id }}</td>
         <td><span class="chip {{ 'ok' if x.status == 'ok' else 'bad' }}">{{ x.status }}</span></td>
-        <td class="num small">{{ ((x.latency_ms or 0) / 1000)|round(1) }}s</td><td class="num small">{{ x.input_tokens or '' }} / {{ x.output_tokens or '' }}</td></tr>
-      {% else %}<tr><td colspan="6" class="muted">기록 없음 (기록은 이 기능 도입 이후 호출부터 남습니다)</td></tr>{% endfor %}
+        <td class="num small r">{{ ((x.latency_ms or 0) / 1000)|round(1) }}s</td><td class="num small nowrap r">{{ x.input_tokens or '' }} / {{ x.output_tokens or '' }}</td></tr>
+      {% else %}<tr><td colspan="6" class="muted empty">기록 없음 (기록은 이 기능 도입 이후 호출부터 남습니다)</td></tr>{% endfor %}
       </tbody></table></div>
     </section>
   </div>
   <div class="cols">
     <section>
       <h2>처리 작업</h2>
-      <div class="table-wrap"><table><thead><tr><th>단계</th><th>상태</th><th>시도</th><th>오류</th></tr></thead><tbody>
+      <div class="table-wrap"><table><thead><tr><th>단계</th><th>상태</th><th class="r">시도</th><th>오류</th></tr></thead><tbody>
       {% for job in jobs %}<tr><td class="small">{{ {'parse_document': '파싱', 'structure': 'AI 추출', 'embed': '임베딩'}.get(job.stage, job.stage) }}</td>
         <td><span class="chip {{ 'ok' if job.status == 'succeeded' else ('bad' if job.status == 'failed' else 'info') }}">{{ job.status }}</span></td>
-        <td class="num">{{ job.attempt_count }}</td><td class="small bad">{{ job.error_code or '' }}</td></tr>
-      {% else %}<tr><td colspan="4" class="muted">작업 없음</td></tr>{% endfor %}
+        <td class="num r">{{ job.attempt_count }}</td><td class="small bad">{{ job.error_code or '' }}</td></tr>
+      {% else %}<tr><td colspan="4" class="muted empty">작업 없음</td></tr>{% endfor %}
       </tbody></table></div>
     </section>
   </div>

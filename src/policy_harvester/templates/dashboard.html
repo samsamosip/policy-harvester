@@ -1,15 +1,22 @@
 {% extends "base.html" %}{% block title %}대시보드 · Policy Harvester{% endblock %}
 {% block head %}<style>
-  .todo { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); margin-bottom: 20px }
-  .todo a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 14px 16px; color: var(--ink) }
-  .todo a:hover { border-color: var(--brand); text-decoration: none }
-  .todo b { display: block; font-size: 26px; line-height: 1.2; margin-top: 4px }
+  .todo { display: grid; gap: 12px; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)) }
+  .todo a { display: block; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 16px 18px; color: var(--ink-2);
+    box-shadow: var(--shadow); transition: border-color .12s, box-shadow .12s }
+  .todo a:hover { border-color: var(--brand); text-decoration: none; box-shadow: 0 2px 8px rgba(16,40,58,.08) }
+  .todo b { display: block; font-size: 28px; line-height: 1.2; margin: 4px 0 2px; color: var(--ink) } .todo b.bad { color: var(--bad) }
   .todo .hint { font-size: 12px; color: var(--muted) }
-  .funnel { display: grid; grid-template-columns: repeat(5, 1fr); gap: 0; border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); overflow: hidden }
-  .funnel div { padding: 14px 16px; border-right: 1px solid var(--line-2) } .funnel div:last-child { border-right: 0 }
-  .funnel span { display: block; font-size: 12px; color: var(--muted) } .funnel b { font-size: 22px }
+  .funnel { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); border: 1px solid var(--line); border-radius: var(--r); background: var(--panel); overflow: hidden; box-shadow: var(--shadow) }
+  .funnel > div { padding: 14px 18px; box-shadow: -1px 0 0 var(--line-2) }
+  .funnel span { display: block; font-size: 12px; color: var(--muted) } .funnel b { display: block; font-size: 22px; line-height: 1.3; margin: 2px 0 }
   .funnel small { display: block; color: var(--muted); font-size: 12px }
-  @media (max-width: 900px) { .funnel { grid-template-columns: repeat(2, 1fr) } }
+  main > .queue { margin-top: 8px }
+  @media (max-width: 600px) {
+    .todo { gap: 8px }
+    .todo a { display: grid; grid-template-columns: minmax(0, 1fr) auto; align-items: center; column-gap: 12px; padding: 12px 16px }
+    .todo b { grid-column: 2; grid-row: 1 / span 2; margin: 0; font-size: 26px }
+  }
+  @media (max-width: 900px) { .funnel { grid-template-columns: repeat(2, minmax(0, 1fr)) } .funnel > div { box-shadow: -1px 0 0 var(--line-2), 0 -1px 0 var(--line-2) } }
 </style>{% endblock %}
 {% block content %}
 <div class="page-head"><div><h1>대시보드</h1><p class="lede">인하대 장학 게시판 수집부터 구조화·공개까지의 현황입니다.</p></div></div>
@@ -21,35 +28,39 @@
 </div>
 
 <h2>처리 현황</h2>
-<div class="funnel" style="margin-bottom:8px">
+<div class="funnel">
   <div><span>수집한 장학 공고</span><b class="num">{{ funnel.notices }}</b><small>범위 밖 {{ funnel.excluded }}건 제외</small></div>
   <div><span>파싱 완료</span><b class="num">{{ funnel.parsed }}</b><small>대기 {{ queue.parse_document.waiting if queue.parse_document else 0 }}건</small></div>
   <div><span>AI 추출 완료</span><b class="num">{{ funnel.extracted }}</b><small>대기 {{ queue.structure.waiting if queue.structure else 0 }}건</small></div>
   <div><span>장학 항목</span><b class="num">{{ funnel.opportunities }}</b><small>한 공고에 여러 개 가능</small></div>
   <div><span>공개 중</span><b class="num">{{ funnel.published }}</b><small>공개 API 노출</small></div>
 </div>
-<p class="muted small" style="margin:0 0 24px">작업 큐: {% for stage, label in [('parse_document','파싱'),('structure','AI 추출'),('embed','임베딩')] %}{% set q = queue.get(stage) %}{{ label }} 대기 {{ q.waiting if q else 0 }} · 실행 {{ q.running if q else 0 }} · 실패 {{ q.failed if q else 0 }}{% if not loop.last %} / {% endif %}{% endfor %}</p>
+<p class="muted small queue">작업 큐: {% for stage, label in [('parse_document','파싱'),('structure','AI 추출'),('embed','임베딩')] %}{% set q = queue.get(stage) %}{{ label }} 대기 {{ q.waiting if q else 0 }} · 실행 {{ q.running if q else 0 }} · 실패 {{ q.failed if q else 0 }}{% if not loop.last %} / {% endif %}{% endfor %}</p>
 
 <div class="cols">
   <section class="panel">
     <h2>마감 임박 장학</h2>
-    {% for row in closing %}
-      <div style="display:flex;justify-content:space-between;gap:12px;padding:8px 0;border-bottom:1px solid var(--line-2)">
+    {% if closing %}<div class="rows">{% for row in closing %}
+      <div class="row">
         <div><a href="/admin/opportunities/{{ row.opportunity_id }}">{{ row.title }}</a><div class="small muted">{{ row.provider_name or '' }}{% if row.benefit %} · {{ row.benefit }}{% endif %}</div></div>
-        <div style="text-align:right"><span class="chip {{ row.deadline.kind }}">{{ row.deadline.label }}</span><div class="small muted num">{{ row.deadline.date or '' }}</div></div>
+        <div class="end"><span class="chip {{ row.deadline.kind }}">{{ row.deadline.label }}</span><div class="small muted num">{{ row.deadline.date or '' }}</div></div>
       </div>
-    {% else %}<p class="muted">신청 가능한 장학이 아직 없습니다. AI 추출이 끝나면 여기에 마감 순으로 표시됩니다.</p>{% endfor %}
-    <p style="margin:12px 0 0"><a href="/admin/opportunities">장학 목록 전체 보기 →</a></p>
+    {% endfor %}</div>{% else %}<p class="muted">신청 가능한 장학이 아직 없습니다. AI 추출이 끝나면 여기에 마감 순으로 표시됩니다.</p>{% endif %}
+    <p><a href="/admin/opportunities">장학 목록 전체 보기 →</a></p>
   </section>
+  <div class="stack">
   <section class="panel">
     <h2>검토 대기 종류</h2>
-    {% for row in reviews %}<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid var(--line-2)"><a href="/admin/reviews?kind={{ row.review_kind }}">{{ review_labels.get(row.review_kind, row.review_kind) }}</a><span class="num">{{ row.count }}</span></div>
-    {% else %}<p class="muted">대기 중인 검토가 없습니다.</p>{% endfor %}
-    <h2 style="margin-top:22px">최근 수집</h2>
-    {% for run in runs %}<div style="display:flex;justify-content:space-between;gap:8px;padding:6px 0;border-bottom:1px solid var(--line-2)" class="small">
-      <span><span class="chip {{ 'ok' if run.status == 'succeeded' else ('warn' if run.status in ['partial','running'] else 'bad') }}">{{ run.status }}</span> {{ run.started_at.strftime('%m-%d %H:%M') if run.started_at else '' }}</span>
-      <span class="num muted">게시글 {{ run.discovered_count }} · 변경 {{ run.changed_count }} · 실패 {{ run.failed_count }}</span></div>
-    {% else %}<p class="muted">수집 기록이 없습니다.</p>{% endfor %}
+    {% if reviews %}<div class="rows">{% for row in reviews %}<div class="row"><a href="/admin/reviews?kind={{ row.review_kind }}">{{ review_labels.get(row.review_kind, row.review_kind) }}</a><span class="end num">{{ row.count }}</span></div>
+    {% endfor %}</div>{% else %}<p class="muted">대기 중인 검토가 없습니다.</p>{% endif %}
   </section>
+  <section class="panel">
+    <h2>최근 수집</h2>
+    {% if runs %}<div class="rows small">{% for run in runs %}<div class="row">
+      <span class="nowrap"><span class="chip {{ 'ok' if run.status == 'succeeded' else ('warn' if run.status in ['partial','running'] else 'bad') }}">{{ run.status }}</span> <span class="num">{{ run.started_at.strftime('%m-%d %H:%M') if run.started_at else '' }}</span></span>
+      <span class="end num muted">게시글 {{ run.discovered_count }} · 변경 {{ run.changed_count }} · 실패 {{ run.failed_count }}</span></div>
+    {% endfor %}</div>{% else %}<p class="muted">수집 기록이 없습니다.</p>{% endif %}
+  </section>
+  </div>
 </div>
 {% endblock %}
