@@ -151,10 +151,10 @@
     {{ item('/admin/table/audit', '감사 로그') }}
     {% endif %}
     <a class="item" href="/docs" target="_blank" rel="noopener"><span>API 문서 (Swagger)</span><span aria-hidden="true">↗</span></a>
-    <div class="me"><a class="me-link" href="/admin/account">{{ admin.display_name }} · {{ admin.role }}</a><div class="muted small">{{ admin.email }}</div>
+    <div class="me"><a class="me-link" href="/admin/account" title="내 계정 · 비밀번호 변경">{{ admin.display_name }} · {{ label('role', admin.role) }}</a><div class="muted small">{{ admin.email }}</div>
       <form method="post" action="/admin/logout"><input type="hidden" name="csrf" value="{{ csrf }}"><button>로그아웃</button></form></div>
   </nav>
-  <main>{% block content %}{% endblock %}</main>
+  <main>{% include "_flash.html" %}{% block content %}{% endblock %}</main>
 </div>
 {% else %}
 <main>{% block anonymous %}{% endblock %}</main>

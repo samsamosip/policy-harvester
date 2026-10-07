@@ -603,10 +603,16 @@ async def codes() -> dict[str, Any]:
     }
 
 
-from .admin import router as admin_router  # noqa: E402
+from fastapi.exceptions import RequestValidationError  # noqa: E402
+from starlette.exceptions import HTTPException as StarletteHTTPException  # noqa: E402
+
+from .admin import admin_http_error, admin_validation_error, router as admin_router  # noqa: E402
 from . import admin_pages  # noqa: E402,F401 - registers the read-only admin pages
 app.include_router(v1)
 app.include_router(admin_router, include_in_schema=False)
+# Admin errors render as a readable page; every other path keeps FastAPI's JSON errors.
+app.add_exception_handler(StarletteHTTPException, admin_http_error)
+app.add_exception_handler(RequestValidationError, admin_validation_error)
 
 
 def run() -> None:

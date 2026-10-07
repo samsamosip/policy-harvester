@@ -1,0 +1,28 @@
+{% extends "base.html" %}{% block title %}감사 로그 · Policy Harvester{% endblock %}
+{% block content %}
+<div class="page-head"><div><h1>감사 로그</h1>
+  <p class="lede">누가 언제 무엇을 바꿨는지 남긴 기록입니다. 사람이 한 작업과 수집기·AI가 자동으로 한 작업이 모두 남고, 지울 수 없습니다.</p></div>
+  <div class="muted num">{% if rows|length >= 300 %}최근 300건 표시{% else %}{{ rows|length }}건{% endif %}</div></div>
+<div class="tabs" aria-label="주체">
+  {% for value, text in [('', '전체'), ('people', '사람이 한 작업'), ('auto', '자동 처리')] %}<a class="{% if who == value %}on{% endif %}" href="?who={{ value }}{% if entity %}&entity={{ entity|urlencode }}{% endif %}">{{ text }}</a>{% endfor %}
+</div>
+{% if entity %}<p class="small">한 대상의 기록만 보는 중입니다 (<span class="mono">{{ entity }}</span>). <a href="?who={{ who }}">전체 기록 보기</a></p>{% endif %}
+{% if rows %}
+<div class="table-wrap"><table>
+<thead><tr><th>시각</th><th>누가</th><th>무엇을</th><th>대상</th><th>사유</th><th></th></tr></thead>
+<tbody>
+{% for row in rows %}<tr>
+  <td class="num small" style="white-space:nowrap">{{ row.created_at|kst }}</td>
+  <td class="small">{% if row.actor_kind == 'admin_user' %}{{ row.actor_display or '' }}<div class="sub">{{ row.actor_email or row.actor_id }}</div>{% else %}{{ actor_name(row.actor_id) }}<div class="sub">{{ label('actor_kind', row.actor_kind) }}</div>{% endif %}</td>
+  <td><span title="{{ row.action }}">{{ audit_action(row.action) }}</span></td>
+  <td class="small">{{ label('entity_type', row.entity_type) }}{% if row.review_kind %} · {{ label('review_kind', row.review_kind) }}{% endif %}
+    <div>{% if row.link %}<a href="{{ row.link }}">{{ row.subject or (row.entity_id[:8] if row.entity_id else '보기') }}</a>{% elif row.subject %}{{ row.subject }}{% else %}<span class="mono" title="{{ row.entity_id }}">{{ (row.entity_id or '')[:8] }}</span>{% endif %}</div></td>
+  <td class="small" style="max-width:360px">{% if row.reason and row.reason != '사유 미기재' %}{{ row.reason }}{% else %}<span class="muted">—</span>{% endif %}</td>
+  <td>{% if row.before_state or row.after_state %}<details class="small"><summary>바뀐 값</summary>
+    {% if row.before_state %}<div class="muted">이전</div><pre class="small" style="white-space:pre-wrap;margin:0">{{ row.before_state|pretty_json(2) }}</pre>{% endif %}
+    {% if row.after_state %}<div class="muted">이후</div><pre class="small" style="white-space:pre-wrap;margin:0">{{ row.after_state|pretty_json(2) }}</pre>{% endif %}
+  </details>{% endif %}</td>
+</tr>{% endfor %}
+</tbody></table></div>
+{% else %}<div class="panel empty">기록이 없습니다.</div>{% endif %}
+{% endblock %}

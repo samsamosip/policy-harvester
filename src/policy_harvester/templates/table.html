@@ -1,48 +1,65 @@
 {% extends "base.html" %}{% block title %}{{ title }} · Policy Harvester{% endblock %}
-{% set hidden = ['notice_id'] %}
+{% set here = request.url.path %}
 {% block content %}
 <div class="page-head"><div><h1>{{ title }}</h1>
-  {% if table_key == 'jobs' %}<p class="lede">수집·파싱·AI 추출·임베딩 작업입니다. 실패한 작업은 원인을 확인하고 재시도할 수 있습니다.</p>
-  {% elif table_key == 'documents' %}<p class="lede">게시글 본문과 첨부를 파싱한 결과입니다. 문서를 누르면 block 단위로 봅니다.</p>
-  {% elif table_key in ['notices', 'opportunities'] %}<p class="lede">운영 확인용 원시 데이터입니다. 평소에는 <a href="/admin/{{ table_key }}">{{ '공고 목록' if table_key == 'notices' else '장학 목록' }}</a>을 쓰세요.</p>{% endif %}
-</div><div class="muted num">{{ rows|length }}건{% if rows|length >= 300 %} (최근 순 일부){% endif %}</div></div>
+  {% if table_key in ['notices', 'opportunities'] %}<p class="lede">운영 확인용 원시 데이터입니다. 평소에는 <a href="/admin/{{ table_key }}">{{ '공고 목록' if table_key == 'notices' else '장학 목록' }}</a>을 쓰세요.</p>
+  {% elif lede %}<p class="lede">{{ lede }}</p>{% endif %}
+</div><div class="muted num">{{ rows|length }}건{% if rows|length >= 200 %} (최근 순 일부){% endif %}</div></div>
 {% if rows %}
 <div class="table-wrap"><table>
 <thead><tr>{% for column in columns if column not in hidden %}<th title="{{ column }}">{{ column_label(column) }}</th>{% endfor %}<th></th></tr></thead>
 <tbody>
 {% for row in rows %}<tr>
   {% for column in columns if column not in hidden %}{% set value = row[column] %}
-  <td{% if value is mapping or (value is iterable and value is not string) %} class="json"{% endif %}>
-    {%- if column == 'status' %}<span class="chip {{ 'ok' if value == 'succeeded' else ('bad' if value == 'failed' else ('warn' if value in ['partial','retry'] else 'info')) }}">{{ value }}</span>
-    {%- elif column == 'stage' %}<span class="chip">{{ {'parse_document': '파싱', 'structure': 'AI 추출', 'embed': '임베딩', 'fetch_detail': '상세 수집', 'discover': '목록 수집'}.get(value, value) }}</span>
+  <td{% if column == 'value_json' or (value is mapping) %} class="json"{% endif %}>
+    {%- if column in domains %}{{ chip(domains[column], value) }}
     {%- elif table_key == 'documents' and column == 'document' %}<a href="/admin/documents/{{ row.id }}">{{ value }}</a>
-    {%- elif table_key == 'documents' and column == 'notice' %}<a href="/admin/notices/{{ row.notice_id }}">{{ value }}</a>
+    {%- elif column == 'notice' and row.notice_id %}<a href="/admin/notices/{{ row.notice_id }}">{{ value }}</a>
+    {%- elif column == 'opportunity' and row.opportunity_id %}<a href="/admin/opportunities/{{ row.opportunity_id }}">{{ value or '장학' }}</a>
+    {%- elif column == 'model_id' %}{{ value }}{% if row.provider_name %}<div class="sub">{{ row.provider_name }}</div>{% endif %}
+    {%- elif column == 'field_path' %}<span title="{{ value }}">{{ field_label(value) }}</span>
+    {%- elif column == 'quality_flags' %}{% for flag in value or [] %}<span class="chip" title="{{ flag }}">{{ quality_flag(flag) }}</span> {% endfor %}
+    {%- elif column in ['error_code', 'error_summary'] and value %}{% set help = error_help(value if column == 'error_code' else '', row.error_message if column == 'error_code' else value) %}
+      <b class="small">{{ help.summary }}</b><div class="sub">{{ help.action }}</div>
+      <details class="small"><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{% if column == 'error_code' %}{{ value }}: {{ row.error_message or '' }}{% else %}{{ value }}{% endif %}</pre></details>
+    {%- elif column == 'is_active' and table_key == 'embedding-profiles' %}{% if value %}<span class="chip ok">검색에 사용 중</span>{% else %}<span class="muted">—</span>{% endif %}
     {%- elif value is sameas true or value is sameas false %}<span class="chip {{ 'ok' if value else '' }}">{{ '예' if value else '아니오' }}</span>
     {%- elif value.__class__.__name__ == 'datetime' %}<span class="num" style="white-space:nowrap" title="{{ value }}">{{ value|kst }}</span>
     {%- elif value.__class__.__name__ == 'UUID' %}<span class="mono" title="{{ value }}">{{ (value|string)[:8] }}</span>
+    {%- elif column == 'value_json' %}{{ value|pretty_json }}
     {%- elif value is mapping %}{{ value|pretty_json(2) }}
     {%- elif value is iterable and value is not string %}{{ value|join(', ') }}
-    {%- elif column in ['error_message', 'job_key'] and value %}<span class="small">{{ value[:200] }}</span>
     {%- elif value is none %}<span class="muted">—</span>
     {%- else %}{{ value }}{% endif -%}
   </td>{% endfor %}
-  <td style="white-space:nowrap">
-  {% if table_key == 'sources' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/sources/{{ row.id }}/crawl"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="manual run" placeholder="사유 (선택)"><button>지금 수집</button></form>{% endif %}
-  {% if table_key == 'sources' and admin.role == 'admin' %}<details><summary>설정</summary>
-    <form class="action" method="post" action="/admin/sources/{{ row.id }}/proxy"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="password" name="proxy_url" placeholder="socks5://user:pass@host:port (비우면 해제)" aria-label="proxy"><input name="reason" placeholder="변경 사유 (선택)"><button class="secondary">Proxy 저장/해제</button></form>
-    <form class="action" method="post" action="/admin/sources/{{ row.id }}/toggle"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="변경 사유 (선택)"><button class="secondary">수집 켜기/끄기</button></form>
-    <form class="action" method="post" action="/admin/sources/{{ row.id }}/raw-policy"><input type="hidden" name="csrf" value="{{ csrf }}"><select name="public_raw_text" aria-label="원문 공개"><option value="false">원문 비공개</option><option value="true">원문 공개 허용</option></select><input name="reason" placeholder="정책 변경 사유 (선택)"><button class="secondary">원문 공개 정책</button></form>
+  <td class="row-action">
+  {% if table_key == 'sources' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/sources/{{ row.id }}/crawl"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="수집 대상 화면에서 수동 수집"><button{% if not row.enabled %} class="secondary" title="수집이 꺼져 있어도 이번 한 번은 수집합니다"{% endif %}>지금 수집</button></form>{% endif %}
+  {% if table_key == 'sources' and admin.role == 'admin' %}<details style="text-align:left;margin-top:6px"><summary>설정 바꾸기</summary>
+    <form class="action" method="post" action="/admin/sources/{{ row.id }}/toggle"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <span class="small muted">정기 수집이 지금 {{ '켜져' if row.enabled else '꺼져' }} 있습니다.</span>
+      <input name="reason" placeholder="변경 사유 (선택)" aria-label="변경 사유"><button class="secondary">{{ '정기 수집 끄기' if row.enabled else '정기 수집 켜기' }}</button></form>
+    <form class="action" method="post" action="/admin/sources/{{ row.id }}/raw-policy"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <span class="small muted">원문 공개: 공개 API가 공고 원문 텍스트를 함께 내보낼지 정합니다.</span>
+      <select name="public_raw_text" aria-label="원문 공개"><option value="false"{% if not row.public_raw_text %} selected{% endif %}>원문 비공개</option><option value="true"{% if row.public_raw_text %} selected{% endif %}>원문 공개 허용</option></select><input name="reason" placeholder="변경 사유 (선택)" aria-label="변경 사유"><button class="secondary">원문 공개 정책 저장</button></form>
+    <form class="action" method="post" action="/admin/sources/{{ row.id }}/proxy"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <span class="small muted">수집 proxy: 학교 사이트가 이 서버의 접속을 막을 때만 씁니다. 비우고 저장하면 해제합니다.</span>
+      <input type="password" name="proxy_url" placeholder="socks5://user:pass@host:port" aria-label="proxy 주소" autocomplete="off"><input name="reason" placeholder="변경 사유 (선택)" aria-label="변경 사유"><button class="secondary">proxy 저장</button></form>
   </details>{% endif %}
-  {% if table_key == 'jobs' and admin.role in ['operator','reviewer','admin'] and row.status in ['failed', 'retry'] %}<form class="inline" method="post" action="/admin/jobs/{{ row.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="manual retry" placeholder="사유 (선택)"><button class="secondary">재시도</button></form>{% endif %}
-  {% if table_key == 'documents' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/documents/{{ row.id }}/reprocess"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="manual reprocess" placeholder="사유 (선택)"><button class="secondary">재파싱</button></form>{% endif %}
-  {% if table_key == 'ai-runs' %}<a href="/admin/ai-runs/{{ row.id }}/compare">이전 실행과 비교</a>{% endif %}
+  {% if table_key == 'documents' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/documents/{{ row.id }}/reprocess"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="파싱 문서 화면에서 재파싱"><input type="hidden" name="next" value="{{ here }}"><button class="secondary small-btn">재파싱</button></form>{% endif %}
+  {% if table_key == 'ai-runs' %}<a class="small" href="/admin/ai-runs/{{ row.id }}/compare">이전 실행과 비교</a>{% endif %}
   {% if table_key == 'opportunities' %}<a href="/admin/opportunities/{{ row.opportunity_id }}?version={{ row.version_no }}">상세</a>{% endif %}
   {% if table_key == 'notices' %}<a href="/admin/notices/{{ row.id }}">상세</a>{% endif %}
-  {% if table_key == 'embedding-profiles' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/embedding-profiles/{{ row.id }}/backfill"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="profile backfill" placeholder="사유 (선택)"><button class="secondary">전체 재색인</button></form>{% endif %}
-  {% if table_key == 'embedding-profiles' and admin.role == 'admin' and not row.is_active %}<form class="inline" method="post" action="/admin/embedding-profiles/{{ row.id }}/activate"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="활성화 사유 (선택)"><button class="secondary">활성 전환</button></form>{% endif %}
-  {% if table_key == 'manual-overrides' and row.action == 'set' and admin.role in ['reviewer','admin'] %}<form class="inline" method="post" action="/admin/overrides/{{ row.id }}/remove"><input type="hidden" name="csrf" value="{{ csrf }}"><input name="reason" placeholder="제거 사유 (선택)"><button class="secondary">수정 취소</button></form>{% endif %}
+  {% if table_key == 'embedding-profiles' and admin.role in ['operator','reviewer','admin'] %}<form class="inline" method="post" action="/admin/embedding-profiles/{{ row.id }}/backfill"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="임베딩 프로필 화면에서 전체 재색인"><button class="secondary small-btn" title="이 프로필로 모든 장학의 임베딩을 다시 계산하는 작업을 작업 큐에 넣습니다">전체 재색인</button></form>{% endif %}
+  {% if table_key == 'embedding-profiles' and admin.role == 'admin' and not row.is_active %}<details style="text-align:left;margin-top:6px"><summary>검색에 쓰기…</summary>
+    <form class="action" method="post" action="/admin/embedding-profiles/{{ row.id }}/activate"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <span class="small muted">공개 검색이 바로 이 색인을 쓰게 됩니다. 모든 장학의 임베딩이 끝나 있어야 전환됩니다.</span>
+      <input name="reason" placeholder="전환 사유 (선택)" aria-label="전환 사유"><button>이 색인으로 전환</button></form></details>{% endif %}
+  {% if table_key == 'manual-overrides' and row.action == 'set' and admin.role in ['reviewer','admin'] %}<details style="text-align:left"><summary>수정 취소…</summary>
+    <form class="action" method="post" action="/admin/overrides/{{ row.id }}/remove"><input type="hidden" name="csrf" value="{{ csrf }}">
+      <span class="small muted">직접 고친 값을 지우고 AI가 추출한 원래 값으로 되돌립니다.</span>
+      <input name="reason" placeholder="취소 사유 (선택)" aria-label="취소 사유"><button class="danger">수정 취소</button></form></details>{% endif %}
   </td>
 </tr>{% endfor %}
 </tbody></table></div>
-{% else %}<div class="panel empty">데이터가 없습니다.</div>{% endif %}
+{% else %}<div class="panel empty">{% if table_key == 'manual-overrides' %}직접 고친 값이 아직 없습니다. 장학 상세 화면의 '값 직접 수정'으로 고칠 수 있습니다.{% elif table_key == 'crawl-runs' %}수집 기록이 없습니다. 수집 대상 화면에서 '지금 수집'을 누르면 시작합니다.{% else %}표시할 내용이 없습니다.{% endif %}</div>{% endif %}
 {% endblock %}

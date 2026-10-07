@@ -7,7 +7,7 @@ h1{margin:0;font-size:20px}p{margin:0;color:var(--muted)}label{display:grid;gap:
 input,button{font:inherit;padding:10px 12px;border:1px solid #c9d1db;border-radius:6px}input:focus-visible,button:focus-visible{outline:2px solid var(--brand);outline-offset:1px}
 button{background:var(--brand);border-color:var(--brand);color:#fff;font-weight:600;cursor:pointer}.bad{color:var(--bad)}
 </style></head><body><form class="box" method="post"><div><h1>Policy Harvester</h1><p>인하대 장학 공고 수집·구조화 관리자</p></div>
-{% if error %}<p class="bad">{{ error }}</p>{% endif %}
-<label for="email">이메일<input id="email" type="email" name="email" required autofocus></label>
-<label for="password">비밀번호<input id="password" type="password" name="password" required></label>
+{% if error %}<p class="bad" role="alert">{{ error }}</p>{% elif request.query_params.get('logged_out') %}<p role="status">로그아웃했습니다.</p>{% elif request.query_params.get('expired') %}<p role="status">로그인이 만료되었거나 다른 곳에서 비밀번호가 바뀌었습니다. 다시 로그인하세요.</p>{% endif %}
+<label for="email">이메일<input id="email" type="email" name="email" value="{{ email or '' }}" autocomplete="username" required autofocus></label>
+<label for="password">비밀번호<input id="password" type="password" name="password" autocomplete="current-password" required></label>
 <button>로그인</button></form></body></html>
