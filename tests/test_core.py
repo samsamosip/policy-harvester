@@ -140,7 +140,9 @@ class StorageAndDetectionTests(unittest.TestCase):
         self.assertEqual(detect_type(hwp, "misleading.doc").format, "hwp")
         word = ole_payload({("WordDocument",): b"\0" * 4096})
         self.assertEqual(detect_type(word, "download.hwp").format, "doc")
-        other = ole_payload({("Workbook",): b"\0" * 4096})
+        workbook = ole_payload({("Workbook",): b"\0" * 4096})
+        self.assertEqual(detect_type(workbook, "download").format, "xls")
+        other = ole_payload({("PowerPoint Document",): b"\0" * 4096})
         self.assertEqual(detect_type(other, "download").format, "ole")
         self.assertEqual(detect_type(other, "legacy.hwp").confidence, "medium")
 
