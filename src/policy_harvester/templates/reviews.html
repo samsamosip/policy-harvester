@@ -20,10 +20,16 @@
 <div class="page-head"><div><h1>검토함</h1><p class="lede">자동으로 확정하지 못해 사람의 판단을 기다리는 항목입니다. 항목마다 무엇이 문제인지와 할 일이 적혀 있습니다.
   처리를 마쳤거나 고칠 것이 없으면 오른쪽 '검토 완료'를 누르세요.</p>
   {% if ai_pending %}<p class="lede small">지금 <b>{{ ai_pending }}건</b>은 AI 2차 검토 중입니다. AI가 스스로 해결하지 못한 항목만 판단 근거와 함께 여기에 올라옵니다. 진행 상황은 <a href="/admin/table/jobs?stage=review">작업 큐</a>에서 볼 수 있습니다.</p>{% endif %}</div></div>
-<div class="tabs">
-  <a class="{% if not kind %}on{% endif %}" href="/admin/reviews">전체 {{ counts|sum(attribute='count') }}</a>
-  {% for row in counts %}<a class="{% if kind == row.review_kind %}on{% endif %}" href="?kind={{ row.review_kind }}">{{ labels.get(row.review_kind, row.review_kind) }} {{ row.count }}</a>{% endfor %}
+<div class="tabs" role="navigation" aria-label="검토 종류">
+  <a class="{% if not kind %}on{% endif %}"{% if not kind %} aria-current="page"{% endif %} href="/admin/reviews">전체 {{ counts|sum(attribute='count') }}</a>
+  {% for row in counts %}<a class="{% if kind == row.review_kind %}on{% endif %}"{% if kind == row.review_kind %} aria-current="page"{% endif %} href="?kind={{ row.review_kind }}">{{ labels.get(row.review_kind, row.review_kind) }} {{ row.count }}</a>{% endfor %}
 </div>
+{% if kind and admin.role in ['reviewer','admin'] %}
+<details class="small"><summary>이 종류 {{ counts|selectattr('review_kind', 'equalto', kind)|map(attribute='count')|first or 0 }}건 모두 완료…</summary>
+<form class="action" method="post" action="/admin/reviews/resolve"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="kind" value="{{ kind }}"><input type="hidden" name="next" value="{{ here }}">
+<span class="small muted">이 종류의 검토 대기 항목을 모두 완료로 표시합니다. 되돌릴 수 없으니 정말 볼 것이 없을 때만 쓰세요.</span>
+<textarea name="reason" rows="2" placeholder="일괄 처리 근거 (선택)" aria-label="일괄 처리 근거"></textarea><button class="secondary">이 종류 모두 검토 완료</button></form></details>
+{% endif %}
 
 {% for row in rows %}
 {% set p = row.payload %}

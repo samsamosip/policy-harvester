@@ -308,6 +308,7 @@ def quality_flag(flag: Any) -> str:
 DONE_MESSAGES = {
     "crawl_requested": "수집을 요청했습니다. 수집기가 곧 시작하며, 진행 상황은 이 목록에서 볼 수 있습니다.",
     "job_retried": "작업을 다시 대기열에 넣었습니다. 작업 처리기(worker)가 곧 실행합니다.",
+    "jobs_retried": "작업 {n}건을 다시 대기열에 넣었습니다. 작업 처리기(worker)가 곧 실행합니다.",
     "source_toggled": "수집 켜기/끄기 설정을 바꿨습니다.",
     "source_raw_policy": "원문 공개 정책을 저장했습니다.",
     "source_proxy_saved": "수집 proxy를 저장했습니다.",
@@ -319,6 +320,7 @@ DONE_MESSAGES = {
     "embeddings_queued": "임베딩 작업 {n}건을 작업 큐에 넣었습니다. 모두 끝나면 '이 색인으로 전환'을 누르세요.",
     "profile_activated": "검색에 쓰는 색인을 전환했습니다.",
     "review_resolved": "검토 완료로 표시했습니다.",
+    "reviews_resolved": "검토 {n}건을 완료로 표시했습니다.",
     "review_override_applied": "값을 수정하고 검토를 완료했습니다.",
     "revision_applied": "정정·연장 내용으로 새 버전(공개 전)을 만들었습니다. 내용을 확인한 뒤 공개하세요.",
     "proposal_rejected": "다른 장학으로 판정했습니다. 두 장학은 따로 유지됩니다.",

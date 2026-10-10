@@ -1,0 +1,333 @@
+/* Design system for the whole admin. Pages add only small layout rules of their own.
+       Layout: navy sidebar on desktop; below 900px a sticky top bar whose menu is a <details>
+       (the CSP allows no script). Content sits in <main> with a shared vertical rhythm. */
+    :root {
+      color-scheme: light;
+      --ink: #1b2430; --ink-2: #455163; --muted: #5f6b7c; --faint: #6b7686;
+      --line: #dde2e8; --line-2: #edf0f4; --bg: #f5f6f8; --panel: #ffffff; --head: #f8f9fb;
+      --nav: #10283a; --nav-2: #173449; --nav-ink: #c9d6e2; --nav-dim: #a8bfd2; --nav-active: #ffffff;
+      --brand: #0f6c8c; --brand-hover: #0b5874; --brand-soft: #e3f1f6; --ring: rgba(15,108,140,.28);
+      --ok: #157347; --ok-soft: #e4f4ea; --ok-line: #b8e0c6;
+      --warn: #8a5100; --warn-soft: #fdf1dc; --warn-line: #f1d39c;
+      --bad: #b42318; --bad-hover: #93190f; --bad-soft: #fde8e6; --bad-line: #f5c2bc;
+      --info: #3b5bab; --info-soft: #e8edfb;
+      --font: "Pretendard", "Apple SD Gothic Neo", "Noto Sans KR", "Malgun Gothic", system-ui, sans-serif;
+      --mono: ui-monospace, "SFMono-Regular", Menlo, Consolas, monospace;
+      --r: 10px; --r-sm: 6px;
+      --ctl: 36px;            /* height of buttons, inputs and selects */
+      --ctl-sm: 36px;         /* inline row actions inside tables: 44px touch floor on coarse pointers */
+      --shadow: 0 1px 2px rgba(16,40,58,.05);
+      --shadow-pop: 0 6px 24px rgba(16,40,58,.18);
+    }
+    * { box-sizing: border-box }
+    html, body { margin: 0 }
+    html { -webkit-text-size-adjust: 100% }
+    body { font: 14px/1.55 var(--font); color: var(--ink); background: var(--bg); overflow-wrap: break-word }
+    a { color: var(--brand); text-decoration: none; text-underline-offset: 2px } a:hover { text-decoration: underline }
+    code, .mono, pre { font-family: var(--mono); font-size: 12px }
+    code { background: var(--line-2); padding: 1px 5px; border-radius: 4px; overflow-wrap: anywhere }
+    pre { margin: 0; white-space: pre-wrap; overflow-wrap: anywhere; max-width: 100%; overflow: auto; line-height: 1.5 }
+    h1 { font-size: 22px; line-height: 1.3; font-weight: 700; letter-spacing: -.01em; margin: 0; text-wrap: balance; overflow-wrap: anywhere }
+    h2 { font-size: 15px; line-height: 1.4; font-weight: 700; margin: 0 0 12px }
+    h3 { font-size: 13px; font-weight: 700; margin: 18px 0 8px; color: var(--ink-2) }
+    p { margin: 0 0 10px } p:last-child { margin-bottom: 0 }
+    ul { margin: 6px 0; padding-left: 20px }
+    .num { font-variant-numeric: tabular-nums }
+    ul.bullets { margin: 4px 0 0; padding-left: 18px }
+    .muted { color: var(--muted) } .small { font-size: 12px } .nowrap { white-space: nowrap } .pre-wrap { white-space: pre-wrap }
+    .bad { color: var(--bad) } .ok { color: var(--ok) }
+    .sr-only { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap }
+    .sr-only:focus { position: static; width: auto; height: auto; clip: auto; display: inline-block; margin: 8px; padding: 8px 12px; background: #fff; border: 1px solid var(--brand); border-radius: var(--r-sm) }
+    :focus-visible { outline: 2px solid var(--brand); outline-offset: 2px; border-radius: 3px }
+    main:focus { outline: none }
+
+    /* ---------- App shell ---------- */
+    .app { display: grid; grid-template-columns: 236px minmax(0, 1fr); min-height: 100vh }
+    .side { background: var(--nav); color: var(--nav-ink); position: sticky; top: 0; height: 100vh; overflow-y: auto;
+      display: flex; flex-direction: column; padding: 18px 12px 16px; scrollbar-width: thin; scrollbar-color: var(--nav-2) transparent }
+    .logo { display: flex; align-items: center; gap: 10px; color: #fff; font-weight: 700; font-size: 15px; line-height: 1.25; padding: 2px 8px 14px }
+    .logo:hover { text-decoration: none }
+    .logo::before { content: "PH"; flex: none; display: grid; place-items: center; width: 30px; height: 30px; border-radius: 8px;
+      background: var(--brand); color: #fff; font-size: 12px; letter-spacing: .02em }
+    .logo small { display: block; color: var(--nav-dim); font-weight: 400; font-size: 11px; margin-top: 2px }
+    .side :focus-visible, .topbar :focus-visible { outline-color: #8fd3ea }
+    .nav-group + .nav-group { margin-top: 2px }
+    .nav-group .group { font-size: 11px; font-weight: 600; letter-spacing: .06em; color: var(--nav-dim); margin: 12px 10px 3px }
+    a.item { display: flex; justify-content: space-between; align-items: center; gap: 8px; min-height: 32px; color: var(--nav-ink);
+      padding: 5px 10px; border-radius: var(--r-sm); position: relative }
+    a.item:hover { background: rgba(255,255,255,.07); color: #fff; text-decoration: none }
+    a.item.active { background: rgba(255,255,255,.12); color: var(--nav-active); font-weight: 600 }
+    a.item.active::before { content: ""; position: absolute; left: -12px; top: 6px; bottom: 6px; width: 3px; border-radius: 0 3px 3px 0; background: #5cc3e6 }
+    a.item.ext { margin-top: 8px; color: var(--nav-dim) }
+    .badge { background: #e8a33d; color: #1b1300; font-size: 11px; font-weight: 700; line-height: 18px; border-radius: 9px; padding: 0 7px; min-width: 20px; text-align: center; font-variant-numeric: tabular-nums }
+    .badge.bad { background: #ef6b5a; color: #fff }
+    .me { border-top: 1px solid rgba(255,255,255,.12); margin-top: auto; padding: 14px 10px 2px; font-size: 12px; line-height: 1.45 }
+    .side a.item.ext { margin-bottom: 20px }
+    .me a.me-link { color: #fff; font-weight: 600 } .me .me-mail { color: var(--nav-dim); overflow-wrap: anywhere }
+    .me form { margin-top: 10px }
+    .me button { height: 30px; padding: 0 12px; background: transparent; border: 1px solid rgba(255,255,255,.28); color: var(--nav-ink); font-size: 12px; border-radius: var(--r-sm) }
+    .me button:hover { background: rgba(255,255,255,.08); color: #fff; border-color: rgba(255,255,255,.4) }
+    .topbar { display: none }
+
+    main { padding: 28px 36px 56px; min-width: 0; max-width: 1480px; margin-inline: auto; width: 100% }
+    /* List pages (notices/opportunities/tables/jobs/audit) use the full width:
+       the 1480px cap squeezed titles before the table's own scroll ever helped. */
+    main.wide { max-width: 1920px }
+    .page-head { display: flex; flex-wrap: wrap; gap: 12px 24px; align-items: flex-end; justify-content: space-between; margin-bottom: 20px }
+    .page-head > :first-child { flex: 1 1 28rem; min-width: 0 }
+    .page-head > :not(:first-child) { flex: none }
+    .page-head .count { color: var(--muted); font-size: 13px; white-space: nowrap; padding-bottom: 2px }
+    .crumbs { font-size: 12px; color: var(--muted); margin-bottom: 6px; overflow-wrap: anywhere }
+    .crumbs a { color: var(--muted) } .crumbs a:hover { color: var(--brand) }
+    .lede { color: var(--ink-2); margin: 8px 0 0; max-width: 72ch }
+    .lede .chip { vertical-align: 1px }
+    /* Vertical rhythm between the blocks of a page, so panels, tables and headings never touch. */
+    main > * + * { margin-top: 16px }
+    main > .page-head + * { margin-top: 0 }
+    /* Pages that open with a bare h1 + paragraph get the same header rhythm as .page-head. */
+    main > h1 + p { margin-top: 8px; color: var(--ink-2); max-width: 80ch }
+    main > h1 + p + p { margin-top: 4px; max-width: 80ch }
+    main > h1 ~ p + :not(p) { margin-top: 20px }
+    main > h2 { margin: 32px 0 10px } main > h2 + * { margin-top: 0 }
+    main > h2 + p.muted { margin-top: -4px; margin-bottom: 10px }
+    section > h2:first-child { margin-top: 0 }
+    .stack > section:not(.panel) > h2 { margin-bottom: 10px }
+
+    .panel { background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); padding: 20px; box-shadow: var(--shadow); min-width: 0 }
+    .panel > * + * { margin-top: 12px } .panel > h2 + * { margin-top: 0 }
+    .panel > h2 + .lede, .panel > h2 + p.muted { margin-top: -6px }
+    .stack { display: grid; grid-template-columns: minmax(0, 1fr); gap: 16px; min-width: 0 }
+    .stack > * + * { margin-top: 0 }
+    .cols { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(min(320px, 100%), 1fr)); align-items: start }
+    .cols.wide { grid-template-columns: repeat(auto-fit, minmax(min(420px, 100%), 1fr)) }
+    .cols > * { min-width: 0 }
+    .kv { display: grid; grid-template-columns: minmax(84px, 128px) minmax(0, 1fr); gap: 8px 16px; margin: 0 }
+    .kv > dt { color: var(--muted) } .kv > dd { margin: 0; min-width: 0; overflow-wrap: anywhere }
+    /* A list of rows inside a panel: title on the left, meta/value on the right. */
+    .rows > .row { display: flex; justify-content: space-between; align-items: flex-start; gap: 12px; padding: 9px 0; border-bottom: 1px solid var(--line-2) }
+    .rows > .row:last-child { border-bottom: 0 }
+    .rows > .row > :first-child { min-width: 0 }
+    .rows > .row > .end { text-align: right; flex: none }
+
+    /* ---------- Chips ---------- */
+    .chip { display: inline-flex; align-items: center; gap: 4px; font-size: 12px; font-weight: 600; line-height: 20px; padding: 0 8px; border-radius: 999px;
+      background: var(--line-2); color: var(--ink-2); white-space: nowrap; vertical-align: middle }
+    .chip.ok { background: var(--ok-soft); color: var(--ok) } .chip.warn { background: var(--warn-soft); color: var(--warn) }
+    .chip.bad { background: var(--bad-soft); color: var(--bad) } .chip.info { background: var(--info-soft); color: var(--info) }
+    .chip.brand { background: var(--brand-soft); color: var(--brand) }
+    .chip + .chip { margin-left: 4px }
+
+    /* ---------- Tables: they scroll inside their own frame, never the page ---------- */
+    .table-wrap { position: relative; overflow-x: auto; max-width: 100%; background: var(--panel); border: 1px solid var(--line); border-radius: var(--r); box-shadow: var(--shadow);
+      -webkit-overflow-scrolling: touch; overscroll-behavior-x: contain }
+    .panel .table-wrap { box-shadow: none }
+    table { width: 100%; border-collapse: collapse }
+    th, td { padding: 10px 12px; text-align: left; border-bottom: 1px solid var(--line-2); vertical-align: top }
+    tbody tr:last-child > td { border-bottom: 0 }
+    /* Korean wraps at spaces only (keep-all); a token too long for its column still breaks
+       instead of overflowing, but never shrinks a column below its longest word. */
+    td { word-break: keep-all; overflow-wrap: break-word }
+    th { font-size: 12px; font-weight: 600; color: var(--muted); background: var(--head); white-space: nowrap; border-bottom-color: var(--line) }
+    /* Long tables keep their header while scrolling: offset covers the mobile topbar. */
+    .table-wrap thead th { position: sticky; top: 0; z-index: 1 }
+    tbody tr:hover > td { background: #f9fbfc }
+    td .mono, td .chip, td code { white-space: nowrap; overflow-wrap: normal }
+    td.json { white-space: pre-wrap; font-family: var(--mono); font-size: 12px; min-width: 16rem; max-width: 34rem; overflow-wrap: anywhere }
+    td.json pre { margin: 0 }
+    .clamp { max-height: 10.5em; overflow-y: auto; overscroll-behavior: contain }
+    td.token { font-family: var(--mono); font-size: 12px; min-width: 10rem; max-width: 22rem; word-break: break-all }
+    td.r, th.r { text-align: right }
+    td.fit { white-space: nowrap }
+    td.ident { min-width: 7rem }  /* snake_case identifiers break only after '_' (<wbr>) */
+    td.date { white-space: nowrap; font-variant-numeric: tabular-nums }
+    td .title { font-weight: 600; color: var(--ink) } a.title { color: var(--brand) }
+    td .sub { font-size: 12px; color: var(--muted); margin-top: 2px }
+    /* List columns breathe on wide screens: titles/refs take the freed width,
+       the table frame scrolls only when the viewport is truly narrow. */
+    td.main { min-width: 22rem }
+    main.wide td.main { min-width: 24rem }
+    td.ref { min-width: 16rem; max-width: 28rem }
+    td.prose { min-width: 18rem; max-width: 56rem }
+    td.empty, .table-wrap td.empty { padding: 28px 16px }
+    td.row-action { width: 1%; white-space: nowrap; text-align: right; padding-top: 6px; padding-bottom: 6px }
+    tr > td.row-action:only-child { text-align: left }
+    .row-actions { display: inline-flex; align-items: center; gap: 6px; justify-content: flex-end; flex-wrap: nowrap }
+
+    /* ---------- Forms ---------- */
+    input, select, textarea, button, .btn { font: inherit; color: var(--ink) }
+    input:not([type=checkbox]):not([type=radio]), select, textarea {
+      min-height: var(--ctl); padding: 6px 10px; border: 1px solid #c3ccd6; border-radius: var(--r-sm); background: #fff; max-width: 100%;
+      transition: border-color .12s, box-shadow .12s }
+    select { padding-right: 28px }
+    textarea { width: 100%; min-width: 0; padding: 8px 10px; line-height: 1.5; resize: vertical }
+    input::placeholder, textarea::placeholder { color: var(--faint) }
+    input:hover, select:hover, textarea:hover { border-color: #a9b4c1 }
+    input:focus, select:focus, textarea:focus { outline: none; border-color: var(--brand); box-shadow: 0 0 0 3px var(--ring) }
+    input[type=checkbox], input[type=radio] { width: 16px; height: 16px; accent-color: var(--brand); vertical-align: -3px; margin: 0 6px 0 0 }
+    /* Every form lays out its controls with a gap; .action stacks them, .fields uses labelled columns. */
+    main form { display: flex; flex-wrap: wrap; gap: 8px; align-items: center }
+    main form > input:not([type=hidden]):not([type=checkbox]) { flex: 1 1 12rem; min-width: 0 }
+    main form.action { display: grid; gap: 8px; align-items: stretch; margin-top: 8px }
+    main form.action > button { width: 100% }
+    main form.fields { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(200px, 100%), 1fr)); gap: 14px 12px; align-items: end }
+    main form.fields > button { justify-self: start }
+    main form.grid { display: grid; gap: 12px; align-items: stretch; max-width: 60rem }
+    main form.grid > label { display: grid; gap: 6px; font-size: 13px; color: var(--ink-2); font-weight: 600 }
+    main form.grid > label > input, main form.grid > label > select { font-weight: 400; width: 100% }
+    main form.grid > label.check { display: flex; align-items: center; gap: 0; font-weight: 400; color: var(--ink) }
+    main form.grid > button { justify-self: start }
+    .field { display: grid; gap: 6px; font-size: 12px; color: var(--ink-2); font-weight: 600 }
+    .field > input, .field > select, .field > textarea { font-weight: 400; width: 100% }
+    form.filters { margin-bottom: 14px }
+    form.filters > input[name=q] { flex: 1 1 16rem; max-width: 24rem }
+    /* Inline forms sit in table cells and toolbars: controls and button stay on one line. */
+    main form.inline { display: inline-flex; gap: 6px; align-items: center; flex-wrap: nowrap; vertical-align: middle }
+    main form.inline > input:not([type=hidden]) { flex: 1 1 10rem; min-width: 8rem }
+    main form.inline > input.wide, main form.inline > select.wide { flex-basis: 20rem }
+    td form.inline > input:not([type=hidden]), td form.inline > select { min-height: var(--ctl-sm); padding-top: 3px; padding-bottom: 3px; font-size: 13px }
+
+    /* ---------- Buttons: primary (default), .secondary, .danger, .ghost; never wrap ---------- */
+    button, .btn { display: inline-flex; align-items: center; justify-content: center; gap: 6px; min-height: var(--ctl); padding: 0 14px;
+      border: 1px solid var(--brand); border-radius: var(--r-sm); background: var(--brand); color: #fff; font-weight: 600; line-height: 1.2;
+      cursor: pointer; text-decoration: none; white-space: nowrap; overflow-wrap: normal; word-break: keep-all; flex: none;
+      transition: background-color .12s, border-color .12s, box-shadow .12s }
+    button:hover, .btn:hover { background: var(--brand-hover); border-color: var(--brand-hover); text-decoration: none }
+    button:active, .btn:active { transform: translateY(1px) }
+    button.secondary, .btn.secondary { background: #fff; color: var(--ink); border-color: #c3ccd6 }
+    button.secondary:hover, .btn.secondary:hover { background: var(--head); border-color: #a9b4c1 }
+    button.danger, .btn.danger { background: var(--bad); border-color: var(--bad); color: #fff }
+    button.danger:hover, .btn.danger:hover { background: var(--bad-hover); border-color: var(--bad-hover) }
+    button:disabled { opacity: .55; cursor: not-allowed }
+    button.small-btn, td button, td .btn, .btn.sm { min-height: var(--ctl-sm); padding: 0 10px; font-size: 13px }
+    td a.btn-link { display: inline-flex; align-items: center; min-height: var(--ctl-sm); padding: 0 4px; white-space: nowrap }
+    main form.fields > button, main form.grid > button { min-width: 7rem }
+
+    /* x opens a "삭제" button beside it, so one stray click deletes nothing. */
+    details.confirm-delete { position: relative; display: inline-block }
+    details.confirm-delete > summary { list-style: none; cursor: pointer; width: var(--ctl-sm); height: var(--ctl-sm); display: grid;
+      place-items: center; border-radius: var(--r-sm); color: var(--muted); font-size: 18px; line-height: 1; padding: 0 }
+    details.confirm-delete > summary::-webkit-details-marker { display: none }
+    details.confirm-delete > summary:hover, details.confirm-delete[open] > summary { background: var(--bad-soft); color: var(--bad) }
+    details.confirm-delete > form { position: absolute; right: calc(100% + 6px); top: 50%; transform: translateY(-50%); z-index: 2 }
+    details.confirm-delete button.danger { box-shadow: var(--shadow-pop) }
+
+    /* Disclosure: a summary row with a rotating caret. */
+    details > summary { cursor: pointer; color: var(--brand); font-weight: 600; list-style: none; display: inline-flex; align-items: center; gap: 6px; min-height: 28px; border-radius: 4px }
+    details > summary::-webkit-details-marker { display: none }
+    details:not(.confirm-delete):not(.mnav) > summary::before { content: ""; width: 0; height: 0; border-left: 5px solid currentColor;
+      border-top: 4px solid transparent; border-bottom: 4px solid transparent; transition: transform .12s }
+    details[open]:not(.confirm-delete):not(.mnav) > summary::before { transform: rotate(90deg) }
+    details > summary:hover { text-decoration: underline }
+    details.panel > summary { display: flex }
+    details.panel[open] > summary { margin-bottom: 12px }
+    td details > summary { font-size: 13px; min-height: var(--ctl-sm) }
+    /* Settings that unfold inside a table cell: a framed panel, not a run of loose inputs. */
+    /* A full-width row under a table row for its settings (e.g. 수집 대상): the forms sit side by side. */
+    tr.row-detail > td { padding-top: 0; background: none !important }
+    tr:has(+ tr.row-detail) > td { border-bottom: 0 }
+    /* sticky-left keeps the forms in view when the table itself scrolls sideways on a phone */
+    .settings-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(16rem, 100%), 1fr)); gap: 8px; align-items: start; margin-top: 8px;
+      position: sticky; left: 12px; width: min(100%, calc(100vw - 60px)) }
+    .settings-grid > form { margin: 0 !important; padding: 12px; background: var(--head); border: 1px solid var(--line-2); border-radius: var(--r-sm); white-space: normal }
+
+    /* ---------- Tabs, pager, notices, empty states ---------- */
+    .tabs { display: flex; flex-wrap: wrap; gap: 6px; margin-bottom: 14px }
+    .tabs a { display: inline-flex; align-items: center; min-height: 32px; padding: 0 14px; border-radius: 999px; border: 1px solid var(--line);
+      background: #fff; color: var(--ink-2); font-size: 13px; font-weight: 500; white-space: nowrap }
+    .tabs a:hover { border-color: #a9b4c1; text-decoration: none; color: var(--ink) }
+    .tabs a.on { background: var(--ink); color: #fff; border-color: var(--ink); font-weight: 600 }
+    .pager { display: flex; flex-wrap: wrap; gap: 8px; align-items: center; justify-content: center; margin-top: 16px; color: var(--muted) }
+    .pager a { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: var(--r-sm); background: #fff }
+    .pager a:hover { border-color: var(--brand); text-decoration: none }
+    .pager span { padding: 0 8px }
+    /* Sticky section nav on long detail pages (notice/opportunity): anchors + scroll margin. */
+    .subnav { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 6px; padding: 8px 0; background: var(--bg) }
+    .subnav a { display: inline-flex; align-items: center; min-height: 32px; padding: 0 12px; border: 1px solid var(--line); border-radius: 999px; background: #fff; color: var(--ink-2); font-size: 13px; white-space: nowrap }
+    .subnav a:hover { border-color: var(--brand); text-decoration: none; color: var(--ink) }
+    section[id], details[id] { scroll-margin-top: 12px }
+    /* Sticky action bar on the opportunity page: publish/embed stay reachable. */
+    .actionbar { position: sticky; top: 0; z-index: 5; display: flex; flex-wrap: wrap; gap: 8px; align-items: center; padding: 8px 0; background: var(--bg) }
+    /* Unified diff: red/green rows + line numbers without JS. */
+    .diff { counter-reset: ln; font-family: var(--mono); font-size: 12px; line-height: 1.6 }
+    .diff .dl { display: grid; grid-template-columns: 3rem minmax(0, 1fr); gap: 0 10px; padding: 0 8px; white-space: pre-wrap; overflow-wrap: anywhere }
+    .diff .dl::before { counter-increment: ln; content: counter(ln); color: var(--faint); text-align: right; font-variant-numeric: tabular-nums; user-select: none }
+    .diff .del { background: var(--bad-soft); color: var(--bad) }
+    .diff .add { background: var(--ok-soft); color: var(--ok) }
+    .diff .ctx { color: var(--ink-2) }
+    .notice { padding: 12px 14px 12px 16px; border-radius: var(--r-sm); background: var(--warn-soft); color: var(--warn); border: 1px solid var(--warn-line);
+      border-left-width: 4px; overflow-wrap: anywhere }
+    .notice.ok { background: var(--ok-soft); color: var(--ok); border-color: var(--ok-line) }
+    .notice.bad { background: var(--bad-soft); color: var(--bad); border-color: var(--bad-line) }
+    .notice code { background: rgba(255,255,255,.6) }
+    .secret { font-family: var(--mono); font-size: 13px; padding: 10px 12px; background: #fff; border: 1px dashed var(--ok); border-radius: var(--r-sm); user-select: all; overflow-wrap: anywhere }
+    .empty { padding: 36px 20px; text-align: center; color: var(--muted) }
+    .panel.empty { border-style: dashed; box-shadow: none; background: transparent }
+    .empty .btn { margin-top: 12px }
+    .toolbar { display: flex; flex-wrap: wrap; gap: 8px; align-items: center } .toolbar > * + * { margin-top: 0 }
+    pre.code { background: var(--head); border: 1px solid var(--line); border-radius: var(--r-sm); padding: 10px 12px; color: var(--ink-2) }
+    hr { border: 0; border-top: 1px solid var(--line-2); margin: 16px 0 }
+
+    /* ---------- Narrow screens ---------- */
+    @media (max-width: 900px) {
+      :root { --ctl: 40px; --ctl-sm: 36px }
+      .app { display: block }
+      .side { display: none }
+      .topbar { display: flex; align-items: center; justify-content: space-between; gap: 12px; position: sticky; top: 0; z-index: 20;
+        background: var(--nav); color: var(--nav-ink); padding: 0 8px 0 16px; min-height: 56px; box-shadow: 0 1px 0 rgba(0,0,0,.2) }
+      .topbar .logo { padding: 0; font-size: 14px }
+      .topbar .logo small { display: none }
+      .mnav > summary { color: #fff; min-height: 44px; padding: 0 12px; border-radius: var(--r-sm); font-weight: 600; gap: 8px }
+      .mnav > summary:hover { text-decoration: none; background: rgba(255,255,255,.08) }
+      .mnav > summary { position: relative; padding-right: 40px }
+      .mnav > summary::before, .mnav > summary::after { content: ""; position: absolute; right: 12px; top: calc(50% - 1px); width: 16px; height: 2px;
+        border-radius: 1px; background: currentColor; transition: transform .15s }
+      .mnav > summary::after { box-shadow: 0 -5px 0 currentColor, 0 5px 0 currentColor }
+      .mnav > summary::before { opacity: 0 }
+      .mnav[open] > summary { background: rgba(255,255,255,.12) }
+      .mnav[open] > summary::after { box-shadow: none; transform: rotate(45deg) }
+      .mnav[open] > summary::before { opacity: 1; transform: rotate(-45deg) }
+      .mnav .dot { width: 8px; height: 8px; border-radius: 50%; background: #e8a33d }
+      .mnav > nav { position: absolute; left: 0; right: 0; top: 100%; background: var(--nav); padding: 4px 12px 16px;
+        max-height: calc(100vh - 56px); max-height: calc(100dvh - 56px); overflow-y: auto; box-shadow: 0 12px 24px rgba(0,0,0,.25); border-top: 1px solid rgba(255,255,255,.08) }
+      .mnav .nav-group { display: grid; grid-template-columns: 1fr 1fr; gap: 2px 6px }
+      .mnav .nav-group .group { grid-column: 1 / -1; margin: 14px 4px 2px }
+      .mnav a.item { min-height: 44px; padding: 8px 10px }
+      .mnav a.item.active::before { display: none }
+      .mnav a.item.ext { margin-top: 12px }
+      .mnav .me { margin-top: 14px }
+      .mnav .me button { height: 40px; padding: 0 16px }
+      main { padding: 18px 16px 48px }
+      h1 { font-size: 20px }
+      .panel { padding: 16px }
+      .page-head { margin-bottom: 16px }
+      .page-head > * { flex: 1 1 100% !important }
+      main > h2 { margin-top: 26px }
+      .tabs { flex-wrap: nowrap; overflow-x: auto; margin-left: -16px; margin-right: -16px; padding: 0 16px 2px; scrollbar-width: none }
+      .tabs::-webkit-scrollbar { display: none }
+      .tabs a { min-height: 40px }
+      .pager a { min-height: 40px }
+      form.filters > input[name=q] { flex-basis: 100%; max-width: none }
+      form.filters > select { flex: 1 1 9rem; min-width: 0 }
+      main form.fields > button, main form.grid > button { width: 100% }
+      details > summary { min-height: 40px }
+      td details > summary { min-height: var(--ctl-sm) }
+      details.confirm-delete > summary { width: 40px; height: 40px }
+      main form.inline > input.wide { flex-basis: 12rem }
+    }
+    /* table.cards: on phones a list table becomes one card per row; the title cell spans the
+       row and the short cells flow beneath it, labelled from data-label (same text as the th). */
+    @media (max-width: 700px) {
+      table.cards, table.cards tbody { display: block }
+      table.cards thead { display: none }
+      table.cards tr { display: flex; flex-wrap: wrap; align-items: baseline; gap: 6px 14px; padding: 12px 14px; border-bottom: 1px solid var(--line-2) }
+      table.cards tr:last-child { border-bottom: 0 }
+      table.cards td { display: block; padding: 0; border: 0; min-width: 0; max-width: none; width: auto; text-align: left; background: none !important }
+      table.cards td.main { flex: 1 1 100%; font-size: 15px }
+      table.cards td.ref { flex: 1 1 100%; font-size: 12px }
+      table.cards td:not(.main) .sub { display: inline; margin-left: 6px }
+      table.cards td[data-label]::before { content: attr(data-label); color: var(--muted); font-size: 12px; margin-right: 6px }
+    }
+    @media (max-width: 480px) {
+      .kv { grid-template-columns: minmax(72px, 96px) minmax(0, 1fr); gap: 6px 12px }
+    }
+    @media (prefers-reduced-motion: reduce) { * { transition: none !important } }

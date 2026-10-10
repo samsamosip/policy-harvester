@@ -1,5 +1,5 @@
 {% extends "base.html" %}{% block title %}{{ title }} · 비교 · Policy Harvester{% endblock %}
 {% block content %}<div class="page-head"><div>{% if back %}<div class="crumbs"><a href="{{ back }}">← 돌아가기</a></div>{% endif %}<h1>{{ title }}</h1>
-  <p class="lede">{{ lede or "이전 버전과 비교합니다. '-'로 시작하는 줄은 이전에만, '+'로 시작하는 줄은 새 버전에만 있는 내용입니다." }}</p>
+  <p class="lede">{{ lede or "이전 버전과 비교합니다. 빨간 줄은 이전에만, 초록 줄은 새 버전에만 있는 내용입니다." }}</p>
   <p class="small muted">{{ labels[0] }} → {{ labels[1] }}</p></div></div>
-<pre class="panel" style="white-space:pre-wrap;overflow:auto">{{ diff }}</pre>{% endblock %}
+<div class="panel diff" role="table" aria-label="버전 비교">{% for line in diff.split('\n') %}{% if line.startswith('+') and not line.startswith('+++') %}<div class="dl add" role="row"><span role="cell">{{ line }}</span></div>{% elif line.startswith('-') and not line.startswith('---') %}<div class="dl del" role="row"><span role="cell">{{ line }}</span></div>{% else %}<div class="dl ctx" role="row"><span role="cell">{{ line }}</span></div>{% endif %}{% endfor %}</div>{% endblock %}

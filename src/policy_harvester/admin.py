@@ -198,6 +198,14 @@ async def _form(request: Request, admin: dict[str, Any]) -> Any:
 
 
 def _context(request: Request, admin: dict[str, Any], **values: Any) -> dict[str, Any]:
+    values.setdefault("wide", request.url.path in {
+        "/admin/opportunities", "/admin/notices", "/admin/reviews",
+        "/admin/table/sources", "/admin/table/crawl-runs", "/admin/table/jobs",
+        "/admin/table/ai-runs", "/admin/table/documents", "/admin/table/opportunities",
+        "/admin/table/notices", "/admin/table/embedding-profiles",
+        "/admin/table/manual-overrides", "/admin/table/audit", "/admin/search-debug",
+        "/admin/users", "/admin/api-keys",
+    } or request.url.path.startswith("/admin/table/"))
     return {"request": request, "admin": admin, "csrf": admin["csrf"], **values}
 
 
@@ -798,6 +806,28 @@ async def request_crawl(source_id: uuid.UUID, request: Request, session: Session
     return RedirectResponse(with_message("/admin/table/crawl-runs", "crawl_requested"), status_code=303)
 
 
+@router.post("/jobs/retry")
+async def retry_jobs(request: Request, session: Session, admin: Operator) -> RedirectResponse:
+    """Retry every failed/retry job matching the current jobs filter (bulk from the queue page)."""
+    form = await _form(request, admin)
+    status = str(form.get("status", ""))
+    stage = str(form.get("stage", ""))
+    status = status if status in JOB_FILTERS else ""
+    stage = stage if stage in admin_text.LABELS["job_stage"] else ""
+    ids = (await session.execute(text("""
+        SELECT id FROM inha_policy.crawl_jobs
+        WHERE status IN ('failed', 'retry')
+          AND (:status = '' OR status = :status) AND (:stage = '' OR stage = :stage)
+        ORDER BY created_at DESC LIMIT 300
+    """), {"status": status, "stage": stage})).scalars().all()
+    count = await _retry_job_ids(session, admin, list(ids), _reason(form))
+    await session.commit()
+    back = _next_path(form, "/admin/table/jobs")
+    if not count:
+        return RedirectResponse(with_message(back, "job_running", problem=True), status_code=303)
+    return RedirectResponse(with_message(back, "jobs_retried", n=count), status_code=303)
+
+
 @router.post("/jobs/{job_id}/retry")
 async def retry_job(job_id: uuid.UUID, request: Request, session: Session,
                     admin: Operator) -> RedirectResponse:
@@ -824,6 +854,57 @@ async def retry_job(job_id: uuid.UUID, request: Request, session: Session,
                  reason=reason)
     await session.commit()
     return RedirectResponse(with_message(_next_path(form, "/admin/table/jobs"), "job_retried"), status_code=303)
+
+
+async def _retry_job_ids(session: AsyncSession, admin: dict[str, Any], ids: list[uuid.UUID],
+                         reason: str) -> int:
+    """Queue failed/retry jobs again; running jobs with a fresh heartbeat stay untouched."""
+    if not ids:
+        return 0
+    rows = (await session.execute(text("""
+        SELECT id, status, heartbeat_at FROM inha_policy.crawl_jobs
+        WHERE id = ANY(:ids) FOR UPDATE
+    """), {"ids": ids})).mappings().all()
+    fresh = datetime.now(UTC) - timedelta(minutes=15)
+    retryable = [row["id"] for row in rows
+                 if row["status"] in ("failed", "retry")
+                 and not (row["status"] == "running" and row["heartbeat_at"] is not None
+                          and row["heartbeat_at"] > fresh)]
+    if not retryable:
+        return 0
+    await session.execute(text("""
+        UPDATE inha_policy.crawl_jobs SET status='queued', attempt_count=0,
+          available_at=now(), worker_id=NULL, locked_at=NULL, heartbeat_at=NULL,
+          started_at=NULL, finished_at=NULL, error_code=NULL, error_message=NULL
+        WHERE id = ANY(:ids)
+    """), {"ids": retryable})
+    for job_id in retryable:
+        await _audit(session, admin, "job_retried", "crawl_job", str(job_id),
+                     before={"status": "retry-queued"}, after={"status": "queued", "attempt_count": 0},
+                     reason=reason)
+    return len(retryable)
+
+
+@router.post("/notices/{notice_id}/jobs/retry")
+async def retry_notice_jobs(notice_id: uuid.UUID, request: Request, session: Session,
+                            admin: Operator) -> RedirectResponse:
+    """Retry every failed/retry job of one notice (bulk from the notice page)."""
+    form = await _form(request, admin)
+    exists = (await session.execute(text(
+        "SELECT 1 FROM inha_policy.notices WHERE id=:id"), {"id": notice_id})).first()
+    if exists is None:
+        raise HTTPException(404)
+    ids = (await session.execute(text("""
+        SELECT j.id FROM inha_policy.crawl_jobs j
+        JOIN inha_policy.notice_versions nv ON nv.id=j.notice_version_id
+        WHERE nv.notice_id=:notice AND j.status IN ('failed', 'retry')
+    """), {"notice": notice_id})).scalars().all()
+    count = await _retry_job_ids(session, admin, list(ids), _reason(form))
+    await session.commit()
+    back = _next_path(form, f"/admin/notices/{notice_id}")
+    if not count:
+        return RedirectResponse(with_message(back, "job_running", problem=True), status_code=303)
+    return RedirectResponse(with_message(back, "jobs_retried", n=count), status_code=303)
 
 
 @router.post("/sources/{source_id}/toggle")
@@ -1118,6 +1199,33 @@ async def reviews(request: Request, session: Session, admin: Viewer) -> HTMLResp
     from .admin_pages import REVIEW_LABELS
     return templates.TemplateResponse(request, "reviews.html", _context(
         request, admin, rows=rows, counts=counts, kind=kind, labels=REVIEW_LABELS, ai_pending=ai_pending))
+
+
+@router.post("/reviews/resolve")
+async def resolve_reviews(request: Request, session: Session, admin: Reviewer) -> RedirectResponse:
+    """Resolve every open review of one kind at once (bulk from the review list)."""
+    form = await _form(request, admin)
+    kind = str(form.get("kind", ""))
+    if kind not in admin_text.LABELS["review_kind"]:
+        raise HTTPException(422, "검토 종류를 고르세요.")
+    reason = _reason(form)
+    ids = (await session.execute(text("""
+        SELECT id FROM inha_policy.review_items
+        WHERE status IN ('open', 'in_review') AND review_kind=:kind
+        ORDER BY created_at LIMIT 300 FOR UPDATE SKIP LOCKED
+    """), {"kind": kind})).scalars().all()
+    for review_id in ids:
+        await session.execute(text("""
+            UPDATE inha_policy.review_items SET status='resolved', resolution_note=:reason,
+              resolved_at=now(), updated_at=now() WHERE id=:id
+        """), {"reason": reason, "id": review_id})
+        await _audit(session, admin, "review_resolved", "review_item", str(review_id),
+                     before={"status": "open"}, after={"status": "resolved"}, reason=reason)
+    await session.commit()
+    back = _next_path(form, "/admin/reviews")
+    if not ids:
+        return RedirectResponse(with_message(back, "review_closed", problem=True), status_code=303)
+    return RedirectResponse(with_message(back, "reviews_resolved", n=len(ids)), status_code=303)
 
 
 @router.post("/reviews/{review_id}/resolve")

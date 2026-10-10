@@ -3,8 +3,8 @@
 :root{--ink:#1b2430;--ink-2:#455163;--muted:#5f6b7c;--faint:#8a94a3;--nav:#10283a;--brand:#0f6c8c;--brand-hover:#0b5874;--ring:rgba(15,108,140,.28);--bad:#b42318;--bad-soft:#fde8e6;--bad-line:#f5c2bc}
 *{box-sizing:border-box}
 body{margin:0;font:14px/1.55 "Pretendard","Apple SD Gothic Neo","Noto Sans KR","Malgun Gothic",system-ui,sans-serif;color:var(--ink);
-  background:radial-gradient(1200px 600px at 50% -10%,#1d4a66 0%,var(--nav) 60%) var(--nav);display:grid;place-items:center;min-height:100vh;min-height:100dvh;padding:24px 16px}
-.box{background:#fff;padding:32px;border-radius:14px;width:min(400px,100%);display:grid;gap:16px;box-shadow:0 20px 50px rgba(0,0,0,.35)}
+  background:var(--nav);display:grid;place-items:center;min-height:100vh;min-height:100dvh;padding:24px 16px}
+.box{background:#fff;padding:32px;border-radius:14px;width:min(400px,100%);display:grid;gap:16px;box-shadow:0 20px 50px rgba(0,0,0,.35);border-top:3px solid var(--brand)}
 .head{display:flex;align-items:center;gap:12px;margin-bottom:4px}
 .head::before{content:"PH";flex:none;display:grid;place-items:center;width:40px;height:40px;border-radius:10px;background:var(--brand);color:#fff;font-weight:700;font-size:14px}
 h1{margin:0;font-size:19px;line-height:1.3}p{margin:0;color:var(--muted);font-size:13px}

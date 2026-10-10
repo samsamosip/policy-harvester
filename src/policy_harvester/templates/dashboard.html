@@ -24,7 +24,7 @@
 <div class="todo">
   <a href="/admin/reviews"><span>검토함</span><b class="num">{{ admin.nav.reviews }}</b><span class="hint">사람의 판단을 기다리는 항목{% if ai_pending %} · AI 2차 검토 중 {{ ai_pending }}건 별도{% endif %}</span></a>
   <a href="/admin/opportunities?state=draft"><span>공개 전 장학</span><b class="num">{{ admin.nav.drafts }}</b><span class="hint">아직 공개하지 않은 최신 버전</span></a>
-  <a href="/admin/table/jobs?status=failed"><span>실패한 작업</span><b class="num {% if admin.nav.failed_jobs %}bad{% endif %}">{{ admin.nav.failed_jobs }}</b><span class="hint">자동 재시도를 모두 써서 확인이 필요한 작업</span></a>
+  <a href="/admin/table/jobs?status=failed"{% if admin.nav.failed_jobs %} aria-label="실패한 작업 {{ admin.nav.failed_jobs }}건 — 먼저 확인하세요" style="border-color:var(--bad-line);box-shadow:0 0 0 2px var(--bad-soft)"{% endif %}><span>실패한 작업{% if admin.nav.failed_jobs %} · 먼저 확인</span><b class="num bad">{{ admin.nav.failed_jobs }}</b><span class="hint">자동 재시도를 모두 써서 확인이 필요한 작업</span>{% else %}</span><b class="num">{{ admin.nav.failed_jobs }}</b><span class="hint">자동 재시도를 모두 써서 확인이 필요한 작업</span>{% endif %}</a>
 </div>
 
 <h2>처리 현황</h2>

@@ -1,5 +1,11 @@
 {% extends "base.html" %}{% block title %}장학 목록 · Policy Harvester{% endblock %}
-{% macro qs(overrides) %}{% set merged = dict(filters, **overrides) %}?{% for key, value in merged.items() if value %}{{ key }}={{ value|string|urlencode }}{% if not loop.last %}&{% endif %}{% endfor %}{% endmacro %}
+{% macro qs(overrides) %}{% set merged = dict(filters, **overrides) %}{% set parts = [] %}{% for key, value in merged.items() if value %}{% set _ = parts.append(key ~ '=' ~ (value|string|urlencode)) %}{% endfor %}?{{ parts|join('&') }}{% endmacro %}
+{% macro pager(base_qs, page, pages) %}<div class="pager num" role="navigation" aria-label="페이지">
+  {% if page > 1 %}<a href="{{ base_qs({'page': 1}) }}" aria-label="첫 페이지">« 처음</a><a href="{{ base_qs({'page': page - 1}) }}">← 이전</a>{% endif %}
+  {% for p in range(1, pages + 1) %}{% if p == 1 or p == pages or (p >= page - 2 and p <= page + 2) %}{% if p == page %}<span aria-current="page"><b>{{ p }}</b></span>{% else %}<a href="{{ base_qs({'page': p}) }}">{{ p }}</a>{% endif %}{% elif p == 2 or p == pages - 1 %}<span aria-hidden="true">…</span>{% endif %}{% endfor %}
+  {% if page < pages %}<a href="{{ base_qs({'page': page + 1}) }}">다음 →</a><a href="{{ base_qs({'page': pages}) }}" aria-label="마지막 페이지">끝 »</a>{% endif %}
+  <form class="inline" method="get" aria-label="페이지로 이동">{% for key, value in filters.items() if value and key != 'page' %}<input type="hidden" name="{{ key }}" value="{{ value }}">{% endfor %}<input name="page" inputmode="numeric" pattern="[0-9]+" size="4" value="{{ page }}" aria-label="페이지 번호"><button class="secondary small-btn">이동</button></form>
+  <span>{{ page }} / {{ pages }}</span></div>{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div><h1>장학 목록</h1><p class="lede">공고에서 AI로 추출한 장학입니다. 한 공고에 장학이 여럿이면 각각 나옵니다. 이름을 누르면 원문 근거와 함께 자세히 보고, 공개·수정할 수 있습니다.</p></div>
@@ -22,7 +28,7 @@
   <select id="sort" name="sort" aria-label="정렬">
     <option value="deadline" {% if filters.sort == 'deadline' %}selected{% endif %}>마감 가까운 순</option><option value="recent" {% if filters.sort == 'recent' %}selected{% endif %}>최근 추출 순</option>
   </select>
-  <button>적용</button>{% if filters.q or filters.state or filters.quality %}<a class="btn secondary" href="?deadline={{ filters.deadline }}">초기화</a>{% endif %}
+  <button>적용</button>{% if filters.q or filters.state or filters.quality %}<a class="btn secondary" href="?deadline={{ filters.deadline }}&sort={{ filters.sort }}">초기화</a>{% endif %}
 </form>
 
 {% if rows %}
@@ -46,7 +52,7 @@
   {% endfor %}
   </tbody>
 </table></div>
-<div class="pager num">{% if page > 1 %}<a href="{{ qs({'page': page - 1}) }}">← 이전</a>{% endif %}<span>{{ page }} / {{ pages }}</span>{% if page < pages %}<a href="{{ qs({'page': page + 1}) }}">다음 →</a>{% endif %}</div>
+{{ pager(qs, page, pages) }}
 {% else %}
 <div class="panel empty">조건에 맞는 장학이 없습니다.{% if not filters.q and not filters.state and not filters.quality %} 공고의 AI 추출이 끝나면 여기에 나타납니다. 처리 상태는 <a href="/admin/notices">공고 목록</a>에서 볼 수 있습니다.{% endif %}</div>
 {% endif %}

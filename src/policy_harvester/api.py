@@ -16,6 +16,7 @@ from typing import Annotated, Any, Literal
 
 from fastapi import APIRouter, Depends, FastAPI, HTTPException, Query, Request, Response, Security
 from fastapi.responses import FileResponse, HTMLResponse, JSONResponse, RedirectResponse
+from fastapi.staticfiles import StaticFiles
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
 
@@ -47,6 +48,7 @@ app = FastAPI(
     docs_url=None,
     redoc_url=None,
 )
+app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
 Session = Annotated[AsyncSession, Depends(get_session)]
 
 

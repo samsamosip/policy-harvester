@@ -16,8 +16,9 @@
 </div>
 
 <div class="stack">
+  <nav class="subnav" aria-label="페이지 구역"><a href="#status">상태</a><a href="#opportunities">장학</a><a href="#documents">문서</a><a href="#runs">AI 추출</a><a href="#exchanges">LLM 원본</a><a href="#jobs">처리 작업</a></nav>
   <div class="cols">
-    <section class="panel">
+    <section class="panel" id="status">
       <h2>상태</h2>
       <dl class="kv">
         <dt>수집 범위</dt><dd>{{ chip('scope', notice.scope_status) }}{% if notice.scope_status != 'included' %} <span class="small muted">장학 분류가 아니라 AI 추출을 하지 않습니다.</span>{% endif %}</dd>
@@ -63,36 +64,50 @@
   <div class="cols">
     <section id="runs">
       <h2>AI 추출 실행</h2>
-      <div class="table-wrap"><table><thead><tr><th>시작</th><th>결과</th><th>모델·프롬프트</th><th class="r">토큰(입력/출력)</th></tr></thead><tbody>
-      {% for run in runs %}<tr><td class="date small">{{ run.started_at|kst }}</td>
+      <div class="table-wrap"><table><caption class="sr-only">AI 추출 실행 기록</caption><thead><tr><th scope="col">시작</th><th scope="col">결과</th><th scope="col">모델·프롬프트</th><th scope="col" class="r">토큰(입력/출력)</th></tr></thead><tbody>
+      {% for run in runs[:20] %}<tr><td class="date small">{{ run.started_at|kst }}</td>
         <td>{{ chip('extraction_status', run.status) }}{% if run.status == 'succeeded' %}<div class="sub">장학 {{ run.item_count }}개</div>{% endif %}
           {% if run.error_code %}{% set help = error_help(run.error_code, run.error_message) %}<div class="sub bad">{{ help.summary }}</div><details class="small"><summary>오류 원문</summary><pre class="small pre-wrap">{{ run.error_code }}: {{ run.error_message or '' }}</pre></details>{% endif %}</td>
         <td class="small">{{ run.model_id }}<div class="sub">{{ run.prompt_version }}</div>{% if not loop.last %}<a class="small" href="/admin/ai-runs/{{ run.id }}/compare">이전 실행과 비교</a>{% endif %}</td><td class="num small nowrap r">{{ run.input_tokens or '' }} / {{ run.output_tokens or '' }}</td></tr>
       {% else %}<tr><td colspan="4" class="muted empty">실행 기록이 없습니다.</td></tr>{% endfor %}
       </tbody></table></div>
+      {% if runs|length > 20 %}<details class="small"><summary>이전 실행 {{ runs|length - 20 }}건 더 보기</summary>
+      <div class="table-wrap"><table><caption class="sr-only">이전 AI 추출 실행 기록</caption><thead><tr><th scope="col">시작</th><th scope="col">결과</th><th scope="col">모델·프롬프트</th><th scope="col" class="r">토큰</th></tr></thead><tbody>
+      {% for run in runs[20:] %}<tr><td class="date small">{{ run.started_at|kst }}</td><td>{{ chip('extraction_status', run.status) }}</td><td class="small">{{ run.model_id }}<div class="sub">{{ run.prompt_version }}</div></td><td class="num small nowrap r">{{ run.input_tokens or '' }} / {{ run.output_tokens or '' }}</td></tr>{% endfor %}
+      </tbody></table></div></details>{% endif %}
     </section>
-    <section>
+    <section id="exchanges">
       <h2>LLM 요청·응답 원본</h2>
-      <div class="table-wrap"><table><thead><tr><th>시각</th><th>용도</th><th>모델</th><th>결과</th><th class="r">걸린 시간</th><th class="r">토큰</th></tr></thead><tbody>
-      {% for x in exchanges %}<tr><td class="date small"><a href="/admin/llm-exchanges/{{ x.id }}">{{ x.started_at|kst(true) }}</a></td>
+      <div class="table-wrap"><table><caption class="sr-only">LLM 요청 응답 원본 기록</caption><thead><tr><th scope="col">시각</th><th scope="col">용도</th><th scope="col">모델</th><th scope="col">결과</th><th scope="col" class="r">걸린 시간</th><th scope="col" class="r">토큰</th></tr></thead><tbody>
+      {% for x in exchanges[:20] %}<tr><td class="date small"><a href="/admin/llm-exchanges/{{ x.id }}">{{ x.started_at|kst(true) }}</a></td>
         <td class="small">{{ label('exchange_purpose', x.purpose) }}</td>
         <td class="small">{{ x.model_id }}</td>
         <td>{{ chip('exchange_status', x.status) }}</td>
         <td class="num small r">{{ ((x.latency_ms or 0) / 1000)|round(1) }}초</td><td class="num small nowrap r">{{ x.input_tokens or '' }} / {{ x.output_tokens or '' }}</td></tr>
       {% else %}<tr><td colspan="6" class="muted empty">기록이 없습니다. (이 기능을 도입한 뒤의 호출부터 남습니다)</td></tr>{% endfor %}
       </tbody></table></div>
+      {% if exchanges|length > 20 %}<details class="small"><summary>이전 기록 {{ exchanges|length - 20 }}건 더 보기</summary>
+      <div class="table-wrap"><table><caption class="sr-only">이전 LLM 요청 응답 기록</caption><thead><tr><th scope="col">시각</th><th scope="col">용도</th><th scope="col">모델</th><th scope="col">결과</th><th scope="col" class="r">걸린 시간</th><th scope="col" class="r">토큰</th></tr></thead><tbody>
+      {% for x in exchanges[20:] %}<tr><td class="date small"><a href="/admin/llm-exchanges/{{ x.id }}">{{ x.started_at|kst(true) }}</a></td><td class="small">{{ label('exchange_purpose', x.purpose) }}</td><td class="small">{{ x.model_id }}</td><td>{{ chip('exchange_status', x.status) }}</td><td class="num small r">{{ ((x.latency_ms or 0) / 1000)|round(1) }}초</td><td class="num small nowrap r">{{ x.input_tokens or '' }} / {{ x.output_tokens or '' }}</td></tr>{% endfor %}
+      </tbody></table></div></details>{% endif %}
     </section>
   </div>
   <section id="jobs">
     <h2>처리 작업</h2>
-    <div class="table-wrap"><table><thead><tr><th>단계</th><th>상태</th><th>시각</th><th>오류</th><th></th></tr></thead><tbody>
-    {% for job in jobs %}<tr><td>{{ chip('job_stage', job.stage) }}</td>
+    <div class="table-wrap"><table><caption class="sr-only">처리 작업 목록</caption><thead><tr><th scope="col">단계</th><th scope="col">상태</th><th scope="col">시각</th><th scope="col">오류</th><th><span class="sr-only">작업</span></th></tr></thead><tbody>
+    {% for job in jobs[:20] %}<tr><td>{{ chip('job_stage', job.stage) }}</td>
       <td>{{ chip('job_status', job.status) }}<div class="sub num">시도 {{ job.attempt_count }}/{{ job.max_attempts }}{% if job.status == 'retry' %} · 다음 {{ job.available_at|kst }}{% endif %}</div></td>
       <td class="date small">{{ job_time(job) }}</td>
-      <td class="small prose">{% if job.error_code and job.status == 'succeeded' %}<span class="muted">이전 시도 오류 후 완료</span>{% elif job.error_code %}{% set help = error_help(job.error_code, job.error_message) %}<b class="{{ 'bad' if job.status == 'failed' else '' }}">{{ help.summary }}</b><div>{{ help.action }}</div><details><summary>오류 원문</summary><pre class="small" style="white-space:pre-wrap;margin:4px 0 0">{{ job.error_code }}: {{ job.error_message }}</pre></details>{% endif %}</td>
+      <td class="small prose">{% if job.error_code and job.status == 'succeeded' %}<span class="muted">이전 시도 오류 후 완료</span>{% elif job.error_code %}{% set help = error_help(job.error_code, job.error_message) %}<b class="{{ 'bad' if job.status == 'failed' else '' }}">{{ help.summary }}</b><div>{{ help.action }}</div><details><summary>오류 원문</summary><pre class="small pre-wrap">{{ job.error_code }}: {{ job.error_message }}</pre></details>{% endif %}</td>
       <td class="row-action">{% if can_operate and job.status in ['failed', 'retry'] %}<form class="inline" method="post" action="/admin/jobs/{{ job.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재시도"><input type="hidden" name="next" value="/admin/notices/{{ notice.id }}"><button class="secondary small-btn">{{ '지금 재시도' if job.status == 'retry' else '재시도' }}</button></form>{% endif %}</td></tr>
     {% else %}<tr><td colspan="5" class="muted">작업이 없습니다.</td></tr>{% endfor %}
     </tbody></table></div>
+    {% if jobs|length > 20 %}<details class="small"><summary>이전 작업 {{ jobs|length - 20 }}건 더 보기</summary>
+    <div class="table-wrap"><table><caption class="sr-only">이전 처리 작업 목록</caption><thead><tr><th scope="col">단계</th><th scope="col">상태</th><th scope="col">시각</th><th scope="col">오류</th><th><span class="sr-only">작업</span></th></tr></thead><tbody>
+    {% for job in jobs[20:] %}<tr><td>{{ chip('job_stage', job.stage) }}</td><td>{{ chip('job_status', job.status) }}<div class="sub num">시도 {{ job.attempt_count }}/{{ job.max_attempts }}</div></td><td class="date small">{{ job_time(job) }}</td><td class="small prose">{% if job.error_code %}{{ error_help(job.error_code, job.error_message).summary }}{% endif %}</td><td class="row-action">{% if can_operate and job.status in ['failed', 'retry'] %}<form class="inline" method="post" action="/admin/jobs/{{ job.id }}/retry"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 재시도"><input type="hidden" name="next" value="/admin/notices/{{ notice.id }}"><button class="secondary small-btn">재시도</button></form>{% endif %}</td></tr>{% endfor %}
+    </tbody></table></div></details>{% endif %}
+    {% if can_operate and jobs|selectattr('status', 'in', ['failed', 'retry'])|list|length > 1 %}
+    <form class="inline" method="post" action="/admin/notices/{{ notice.id }}/jobs/retry" aria-label="이 공고의 실패한 작업 모두 재시도"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="공고 화면에서 실패 작업 모두 재시도"><button class="secondary">실패 {{ jobs|selectattr('status', 'in', ['failed', 'retry'])|list|length }}건 모두 재시도</button></form>{% endif %}
   </section>
 </div>
 {% endblock %}

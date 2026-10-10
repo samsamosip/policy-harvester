@@ -15,9 +15,13 @@
   <select name="stage" aria-label="단계"><option value="">모든 단계</option>{% for value in ['parse_document', 'structure', 'review', 'embed'] %}<option value="{{ value }}"{% if stage == value %} selected{% endif %}>{{ label('job_stage', value) }}</option>{% endfor %}</select>
   <button>적용</button>
 </form>
+{% if admin.role in ['operator','reviewer','admin'] and counts.get('failed') %}
+<form class="inline" method="post" action="/admin/jobs/retry" aria-label=" 보이는 실패 작업 모두 재시도"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="status" value="{{ status }}"><input type="hidden" name="stage" value="{{ stage }}"><input type="hidden" name="reason" value="작업 큐에서 실패 작업 모두 재시도"><input type="hidden" name="next" value="{{ request.url.path }}{% if request.url.query %}?{{ request.url.query }}{% endif %}"><button class="secondary">실패 {{ counts.get('failed') }}건 모두 재시도</button></form>
+{% endif %}
 {% if rows %}
 <div class="table-wrap"><table>
-<thead><tr><th>단계</th><th>상태</th><th>공고</th><th>시각</th><th>오류·결과</th><th></th></tr></thead>
+<caption class="sr-only">작업 큐 목록</caption>
+<thead><tr><th scope="col">단계</th><th scope="col">상태</th><th scope="col">공고</th><th scope="col">시각</th><th scope="col">오류·결과</th><th><span class="sr-only">작업</span></th></tr></thead>
 <tbody>
 {% for row in rows %}<tr>
   <td>{{ chip('job_stage', row.stage) }}<div class="sub mono" title="작업 ID {{ row.id }} · {{ row.job_key }}">{{ (row.id|string)[:8] }}</div></td>

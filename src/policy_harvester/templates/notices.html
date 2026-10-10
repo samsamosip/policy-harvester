@@ -1,5 +1,11 @@
 {% extends "base.html" %}{% block title %}공고 목록 · Policy Harvester{% endblock %}
 {% macro link(scope_value=None, stage_value=None, page_value=None) %}?scope={{ scope if scope_value is none else scope_value }}&stage={{ stage if stage_value is none else stage_value }}{% if q %}&q={{ q|urlencode }}{% endif %}{% if page_value %}&page={{ page_value }}{% endif %}{% endmacro %}
+{% macro pager(page, pages) %}<div class="pager num" role="navigation" aria-label="페이지">
+  {% if page > 1 %}<a href="{{ link(page_value=1) }}" aria-label="첫 페이지">« 처음</a><a href="{{ link(page_value=page - 1) }}">← 이전</a>{% endif %}
+  {% for p in range(1, pages + 1) %}{% if p == 1 or p == pages or (p >= page - 2 and p <= page + 2) %}{% if p == page %}<span aria-current="page"><b>{{ p }}</b></span>{% else %}<a href="{{ link(page_value=p) }}">{{ p }}</a>{% endif %}{% elif p == 2 or p == pages - 1 %}<span aria-hidden="true">…</span>{% endif %}{% endfor %}
+  {% if page < pages %}<a href="{{ link(page_value=page + 1) }}">다음 →</a><a href="{{ link(page_value=pages) }}" aria-label="마지막 페이지">끝 »</a>{% endif %}
+  <form class="inline" method="get" aria-label="페이지로 이동"><input type="hidden" name="scope" value="{{ scope }}"><input type="hidden" name="stage" value="{{ stage }}">{% if q %}<input type="hidden" name="q" value="{{ q }}">{% endif %}<input name="page" inputmode="numeric" pattern="[0-9]+" size="4" value="{{ page }}" aria-label="페이지 번호"><button class="secondary small-btn">이동</button></form>
+  <span>{{ page }} / {{ pages }}</span></div>{% endmacro %}
 {% block content %}
 <div class="page-head">
   <div><h1>공고 목록</h1><p class="lede">인하대 장학 게시판에서 수집한 공고입니다. 공고마다 본문·첨부 파싱, AI 추출 상태와 거기서 나온 장학 수를 보여 줍니다. 제목을 누르면 처리 과정과 오류를 자세히 봅니다.</p></div>
@@ -37,6 +43,6 @@
   {% endfor %}
   </tbody>
 </table></div>
-<div class="pager num">{% if page > 1 %}<a href="{{ link(page_value=page - 1) }}">← 이전</a>{% endif %}<span>{{ page }} / {{ pages }}</span>{% if page < pages %}<a href="{{ link(page_value=page + 1) }}">다음 →</a>{% endif %}</div>
+{{ pager(page, pages) }}
 {% else %}<div class="panel empty">조건에 맞는 공고가 없습니다.{% if q or stage %} <a href="?scope={{ scope }}">조건 지우기</a>{% endif %}</div>{% endif %}
 {% endblock %}

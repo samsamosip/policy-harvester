@@ -41,9 +41,23 @@
 {% if merged_into %}<div class="notice">이 장학은 <a href="/admin/opportunities/{{ merged_into.id }}">{{ merged_into.title }}</a>에 병합되었습니다. 공개 API는 그 장학으로 안내합니다. 잘못 병합했다면 오른쪽 '병합 취소'를 쓰세요.</div>{% endif %}
 {% if version.publication_state == 'draft' and not embedded %}<div class="notice">이 버전은 아직 검색 색인이 없어 공개할 수 없습니다. 오른쪽 '검색 색인 다시 만들기'를 누르고, 작업 큐에서 임베딩이 끝난 뒤 공개하세요.</div>{% endif %}
 
+{% if admin.role in ['reviewer','admin'] or admin.role == 'operator' %}
+<div class="actionbar" aria-label="빠른 작업">
+  {% if admin.role in ['reviewer','admin'] and version.publication_state == 'draft' and opportunity.lifecycle_status != 'merged' %}
+  <form class="inline" method="post" action="/admin/opportunity-versions/{{ version.id }}/publish"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="원문 대조 확인"><button{% if not embedded %} disabled title="검색 색인이 없어 지금은 공개되지 않습니다"{% endif %}>이 버전 공개</button></form>
+  {% endif %}
+  {% if admin.role in ['operator','reviewer','admin'] %}
+  <form class="inline" method="post" action="/admin/opportunity-versions/{{ version.id }}/embed"><input type="hidden" name="csrf" value="{{ csrf }}"><input type="hidden" name="reason" value="상세 화면에서 재임베딩"><button class="secondary">검색 색인 다시 만들기</button></form>
+  {% endif %}
+  {% if reviews %}<a class="btn secondary" href="#reviews">검토 {{ reviews|length }}건 보기</a>{% endif %}
+  <a class="btn secondary" href="/admin/opportunities/{{ opportunity.id }}/diff">최근 두 버전 비교</a>
+</div>
+{% endif %}
+
 <div class="layout">
 <div class="stack">
-  <section class="panel">
+  <nav class="subnav" aria-label="페이지 구역"><a href="#summary">요약</a><a href="#windows">신청 기간</a><a href="#benefits">지원·선발</a><a href="#eligibility">지원 자격</a><a href="#apply">신청·서류</a><a href="#sources">출처</a><a href="#reviews">검토</a></nav>
+  <section class="panel" id="summary">
     <h2>요약</h2>
     <p>{{ version.summary or '' }}</p>
     <dl class="kv">
@@ -54,7 +68,7 @@
     </dl>
   </section>
 
-  <section class="panel">
+  <section class="panel" id="windows">
     <h2>신청 기간</h2>
     {% set wlist = item.application_windows if item else [] %}
     {% for window in wlist %}
@@ -65,7 +79,7 @@
     {% else %}{% for stored in windows %}<div class="item-line">{{ label('window_kind', stored.window_kind) }} {{ stored.start_date or '' }} ~ {{ stored.end_date or '' }} {{ stored.end_time or '' }}</div>{% else %}<p class="muted">원문에서 신청 기간을 찾지 못했습니다.</p>{% endfor %}{% endfor %}
   </section>
 
-  <div class="cols">
+  <div class="cols" id="benefits">
     <section class="panel">
       <h2>지원 내용</h2>
       {% for benefit in (item.benefits if item else []) %}<div class="item-line">
@@ -89,7 +103,7 @@
     </section>
   </div>
 
-  <section class="panel">
+  <section class="panel" id="eligibility">
     <h2>지원 자격</h2>
     {% if item %}{% set e = item.eligibility %}
     <dl class="kv">
@@ -105,7 +119,7 @@
     {% elif eligibility %}<p>{{ eligibility.original_eligibility_text }}</p><p>{{ eligibility.residual_conditions_text }}</p>{% endif %}
   </section>
 
-  <div class="cols">
+  <div class="cols" id="apply">
     <section class="panel">
       <h2>신청 방법</h2>
       {% for method in (item.application_methods if item else []) %}<div class="item-line"><b>{{ {'online': '온라인', 'email': '이메일', 'postal': '우편', 'visit': '방문', 'university_nomination': '학교 추천'}.get(method.method, method.method) }}</b> {{ method.instructions }}
@@ -120,7 +134,7 @@
     </section>
   </div>
 
-  <section class="panel">
+  <section class="panel" id="sources">
     <h2>출처</h2>
     {% for source in sources %}<div class="item-line">{% if source.relation_kind != 'original' %}{{ chip('relation_kind', source.relation_kind) }} {% endif %}<a href="/admin/notices/{{ source.notice_id }}">{{ source.title }}</a> · <a class="small" href="{{ source.canonical_url }}" rel="noreferrer">원문 ↗</a></div>{% endfor %}
     <h3>근거로 쓴 문서</h3>
