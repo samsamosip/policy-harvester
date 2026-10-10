@@ -82,6 +82,26 @@ def ole_payload(streams: dict[tuple[str, ...], bytes]) -> bytes:
     return header + struct.pack("<128I", *fat) + directory + body
 
 
+class ModelEndpointTests(unittest.TestCase):
+    def test_each_role_uses_its_own_endpoint_or_the_default(self):
+        from pydantic import SecretStr
+
+        from policy_harvester.ai.providers import ProviderRegistry
+        from policy_harvester.config import Settings
+
+        base = Settings(llm_provider="openai_compatible", llm_base_url="https://default.example/v1",
+                        llm_api_key=SecretStr("default-key"), extraction_crosscheck_model="cross",
+                        review_llm_model="judge", review_llm_base_url="https://review.example/v1",
+                        review_llm_api_key=SecretStr("review-key"))
+        registry = ProviderRegistry(base)
+        review, cross = registry.reviewer(), registry.crosscheck()
+        self.assertEqual(str(review.provider.client.base_url).rstrip("/"), "https://review.example/v1")
+        self.assertEqual(review.provider.client.api_key, "review-key")
+        self.assertEqual(review.parameters.get("max_tokens"), 32000)
+        self.assertEqual(str(cross.provider.client.base_url).rstrip("/"), "https://default.example/v1")
+        self.assertEqual(cross.provider.client.api_key, "default-key")
+
+
 class AiReviewTests(unittest.TestCase):
     def test_only_judgement_calls_are_reviewed(self):
         from policy_harvester.pipeline.ai_review import reviewable

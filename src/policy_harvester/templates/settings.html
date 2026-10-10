@@ -41,7 +41,7 @@
 <div class="table-wrap"><table class="settings"><thead><tr><th>항목</th><th>지금 쓰는 값</th><th>어디서 온 값</th><th>바꾸기</th></tr></thead><tbody>
 {% for key, item in effective.items() if inputs.get(key, {}).get('group', key.split('.')[0]) == group %}{% set spec = inputs.get(key, {'label': key, 'kind': 'text'}) %}
 <tr><td><div class="title">{{ spec.label }}</div><code class="small">{{ key }}</code></td>
-  <td class="value">{% if spec.kind == 'bool' %}{{ '켜짐' if item.value else '꺼짐' }}{% elif item.value is none or item.value == '' %}<span class="muted">{{ '(기본 AI 설정 사용)' if group == 'extraction' else ('(꺼짐)' if key == 'review.model' else '없음') }}</span>{% else %}{{ (spec.labels or {}).get(item.value, item.value) }}{% endif %}</td>
+  <td class="value">{% if spec.kind == 'bool' %}{{ '켜짐' if item.value else '꺼짐' }}{% elif item.value is none or item.value == '' %}<span class="muted">{{ ('(꺼짐)' if key in ['review.model', 'extraction.crosscheck_model'] else ('(기본 AI 설정 사용)' if group in ['extraction', 'crosscheck', 'review'] else '없음')) }}</span>{% else %}{{ (spec.labels or {}).get(item.value, item.value) }}{% endif %}</td>
   <td class="nowrap"><span class="chip {{ 'brand' if item.source == 'admin_override' else '' }}" title="{{ item.source }}">{{ {'admin_override': '관리자 설정', 'environment': '.env', 'application_default': '기본값'}.get(item.source, item.source) }}</span></td>
   <td>{{ control(key, item, spec) }}</td></tr>
 {% endfor %}

@@ -202,13 +202,13 @@ PostgreSQL에 저장할 수 없는 NUL 문자는 저장 직전에 제거한다.
   `LLM_MAX_OUTPUT_TOKENS`(기본 131072)를 모든 추출 호출에 보낸다. 지정하지 않으면 provider 기본(약 6.4만)에서
   잘려 트랙이 많은 공고가 실패했다.
 - 교차 확인: 결과가 비었거나, 장학이 2개 이상이거나, 입력이 20,000자 이상이면(전체의 약 11%)
-  `EXTRACTION_CROSSCHECK_MODEL`로 한 번 더 추출한다. 장학 수·신청 마감·금액·인원이 다르면 교차 확인 모델이
+  `EXTRACTION_CROSSCHECK_MODEL`(endpoint는 `CROSSCHECK_LLM_*` 없으면 `LLM_*`)로 한 번 더 추출한다. 장학 수·신청 마감·금액·인원이 다르면 교차 확인 모델이
   두 결과를 원문과 대조해 합치고, 합친 결과가 정상 흐름으로 간다(합치기에 실패하면 더 많이 찾은 쪽을 쓰고
   `crosscheck_disagreement` 경고로 검토에 보낸다). 주 모델의 일시 장애(429·5xx·시간 초과)는 10분·30분 뒤
   재시도하고, 마지막 시도에서만 교차 확인 모델로 대신 추출한다.
   각 실행은 별도 `extraction_runs` 행과 `llm_exchanges` 기록을 남긴다.
 - AI 2차 검토: 판단이 필요한 검토(품질 확인, 동일성 확인, 정정·연장 후보)는 사람에게 바로 보내지 않고
-  `REVIEW_LLM_MODEL`(기본 구성 `bedrock.anthropic.claude-opus-5-5`, `LLM_*` endpoint, thinking
+  `REVIEW_LLM_MODEL`(기본 구성 `bedrock.anthropic.claude-opus-5-5`, endpoint는 `REVIEW_LLM_*` 없으면 `LLM_*`, thinking
   `REVIEW_REASONING_EFFORT`)이 공고 원문·추출 결과·관련 장학을 보고 먼저 처리한다(`review` 작업, worker-llm이
   추출 대기열보다 먼저 처리). high 확신일 때만 직접 행동한다.
   - dismiss: 문제없음. 품질 검토면 초안을 공개 대상으로 올린다(`ai_review_cleared`; 근거 충돌이 남은 초안은

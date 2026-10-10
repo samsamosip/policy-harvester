@@ -602,40 +602,45 @@ class ProviderRegistry:
     def __init__(self, settings: Settings | None = None):
         self.settings = settings or get_settings()
 
+    def _target(self, provider: str | None, base_url: str | None, api_key: Any, model: str,
+                reasoning_effort: str | None, output_limit: int | None = None) -> ExtractionTarget:
+        """A model on its own endpoint; each unset endpoint field falls back to the llm_* one."""
+        base = self.settings
+        name = provider or base.llm_provider
+        updates: dict[str, Any] = {"llm_provider": name}
+        if base_url:
+            updates["llm_base_url"] = base_url
+        if api_key is not None and api_key.get_secret_value():
+            updates["llm_api_key"] = api_key
+        if output_limit is not None:
+            updates["llm_max_output_tokens"] = output_limit
+        settings = base.model_copy(update=updates)
+        return ExtractionTarget(ProviderRegistry(settings).llm(name), name, model,
+                                structured_parameters(name, settings, reasoning_effort, model))
+
     def extraction(self) -> ExtractionTarget:
         """The extraction model: extraction_* settings where set, otherwise the llm_* ones."""
         base = self.settings
-        name = base.extraction_llm_provider or base.llm_provider
-        updates: dict[str, Any] = {"llm_provider": name}
-        if base.extraction_llm_base_url:
-            updates["llm_base_url"] = base.extraction_llm_base_url
-        if base.extraction_llm_api_key:
-            updates["llm_api_key"] = base.extraction_llm_api_key
-        settings = base.model_copy(update=updates)
-        return ExtractionTarget(ProviderRegistry(settings).llm(name), name,
-                                base.extraction_llm_model or base.llm_model,
-                                structured_parameters(name, settings, base.extraction_reasoning_effort,
-                                                      base.extraction_llm_model or base.llm_model))
+        return self._target(base.extraction_llm_provider, base.extraction_llm_base_url,
+                            base.extraction_llm_api_key, base.extraction_llm_model or base.llm_model,
+                            base.extraction_reasoning_effort)
 
     def crosscheck(self) -> ExtractionTarget | None:
-        """The second-opinion model on the default llm_* endpoint, if one is configured."""
+        """The second-opinion model (crosscheck_* endpoint, else llm_*), if one is configured."""
         base = self.settings
         if not base.extraction_crosscheck_model:
             return None
-        return ExtractionTarget(self.llm(), base.llm_provider, base.extraction_crosscheck_model,
-                                structured_parameters(base.llm_provider, base, None,
-                                                      base.extraction_crosscheck_model))
+        return self._target(base.crosscheck_llm_provider, base.crosscheck_llm_base_url,
+                            base.crosscheck_llm_api_key, base.extraction_crosscheck_model, None)
 
     def reviewer(self) -> ExtractionTarget | None:
-        """The second-review model on the default llm_* endpoint, if one is configured."""
+        """The AI second-review model (review_* endpoint, else llm_*), if one is configured."""
         base = self.settings
         if not base.review_llm_model:
             return None
         # A verdict is short; the cap leaves room for thinking without inviting runaway output.
-        settings = base.model_copy(update={"llm_max_output_tokens": REVIEW_MAX_OUTPUT_TOKENS})
-        return ExtractionTarget(self.llm(), base.llm_provider, base.review_llm_model,
-                                structured_parameters(base.llm_provider, settings,
-                                                      base.review_reasoning_effort, base.review_llm_model))
+        return self._target(base.review_llm_provider, base.review_llm_base_url, base.review_llm_api_key,
+                            base.review_llm_model, base.review_reasoning_effort, REVIEW_MAX_OUTPUT_TOKENS)
 
     def llm(self, provider: str | None = None) -> LLMProvider:
         name = (provider or self.settings.llm_provider).lower()

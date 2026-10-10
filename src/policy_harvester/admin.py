@@ -1768,13 +1768,15 @@ async def split_source(opportunity_id: uuid.UUID, request: Request, session: Ses
 
 
 SETTING_GROUPS = (
-    ("llm", "기본 AI · 이미지 전사 · 교차 확인",
-     "공고 이미지와 스캔 페이지를 글로 옮겨 적고, 긴 공고의 추출 결과를 한 번 더 확인하는 모델입니다. "
-     "아래 AI 추출·AI 2차 검토에서 비워 둔 항목도 이 설정을 씁니다."),
+    ("llm", "기본 AI · 이미지 전사",
+     "공고 이미지와 스캔 페이지를 글로 옮겨 적는 모델입니다. "
+     "아래 AI 추출·교차 확인·AI 2차 검토에서 비워 둔 항목(API 종류·주소·key)은 이 설정을 씁니다."),
     ("extraction", "AI 추출", "공고에서 장학 정보를 뽑아 구조화하는 모델입니다. 비워 둔 항목은 위 기본 AI 설정을 씁니다."),
+    ("crosscheck", "교차 확인", "장학이 여럿이거나 긴 공고를 다른 모델로 한 번 더 추출하고, 결과가 다르면 이 모델이 원문과 대조해 합칩니다. "
+     "모델을 비우면 하지 않습니다. 비워 둔 API 종류·주소·key는 위 기본 AI 설정을 씁니다."),
     ("review", "AI 2차 검토", "품질·동일성·정정 후보처럼 판단이 필요한 항목을 사람에게 보내기 전에 이 모델이 원문과 대조해 한 번 더 봅니다. "
      "확신하면 직접 닫거나 고치고(품질 항목이면 공개까지), 아니면 판단 근거를 붙여 검토함에 올립니다. "
-     "위 기본 AI의 API 주소에서 실행되며, 모델을 비우면 꺼져 모든 항목이 바로 검토함에 올라옵니다."),
+     "모델을 비우면 꺼져 모든 항목이 바로 검토함에 올라옵니다. 비워 둔 API 종류·주소·key는 위 기본 AI 설정을 씁니다."),
     ("embedding", "임베딩(검색 색인)", "장학 검색에 쓰는 색인을 만드는 모델입니다. 바꾸면 모든 장학의 색인을 다시 만들어야 합니다."),
     ("publishing", "공개", "품질이 '완전'인 결과를 사람 확인 없이 바로 공개 API에 내보낼지 정합니다."),
 )
@@ -1794,7 +1796,13 @@ SETTING_INPUTS: dict[str, dict[str, Any]] = {
                                     "labels": {"low": "low — 빠름", "medium": "medium", "high": "high — 꼼꼼함, 느림"}},
     "llm.max_output_tokens": {"label": "출력 한도(토큰)", "kind": "number", "min": 1024, "max": 1000000,
                               "step": 1, "group": "extraction"},
-    "extraction.crosscheck_model": {"label": "교차 확인 모델 (기본 AI의 API 주소에서 실행, 비우면 안 함)", "kind": "text"},
+    "crosscheck.provider": {"label": "API 종류", "kind": "choice",
+                            "choices": ["openai_compatible", "openai", "azure_openai", "anthropic", "google"]},
+    "crosscheck.base_url": {"label": "API 주소(endpoint)", "kind": "url"},
+    "extraction.crosscheck_model": {"label": "모델 (비우면 교차 확인 안 함)", "kind": "text", "group": "crosscheck"},
+    "review.provider": {"label": "API 종류", "kind": "choice",
+                        "choices": ["openai_compatible", "openai", "azure_openai", "anthropic", "google"]},
+    "review.base_url": {"label": "API 주소(endpoint)", "kind": "url"},
     "review.model": {"label": "검토 모델 (비우면 AI 2차 검토 끔)", "kind": "text"},
     "review.reasoning_effort": {"label": "추론(thinking) 강도", "kind": "choice", "choices": ["low", "medium", "high"],
                                 "labels": {"low": "low — 빠름", "medium": "medium", "high": "high — 꼼꼼함, 느림"}},
@@ -1811,6 +1819,8 @@ for _key, _spec in SETTING_INPUTS.items():
     _spec.setdefault("group", _key.split(".", 1)[0])
 SECRET_FIELDS = {"llm.api_key": ("API key", "llm_api_key"),
                  "extraction.api_key": ("API key", "extraction_llm_api_key"),
+                 "crosscheck.api_key": ("API key", "crosscheck_llm_api_key"),
+                 "review.api_key": ("API key", "review_llm_api_key"),
                  "embedding.api_key": ("API key", "embedding_api_key")}
 
 
@@ -1826,7 +1836,7 @@ def _secret_status(active: dict[str, Any]) -> list[dict[str, Any]]:
         elif env_value is not None and env_value.get_secret_value():
             rows.append({"key": key, "label": label, "masked": mask_secret(env_value.get_secret_value()),
                          "source": "environment", "updated_at": None})
-        elif key in {"embedding.api_key", "extraction.api_key"} and (active.get("llm.api_key") or settings.llm_api_key):
+        elif key != "llm.api_key" and (active.get("llm.api_key") or settings.llm_api_key):
             rows.append({"key": key, "label": label, "masked": "기본 AI의 API key를 같이 씀", "source": "fallback",
                          "updated_at": None})
         else:

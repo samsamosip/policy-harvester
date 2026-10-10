@@ -44,19 +44,26 @@ class Settings(BaseSettings):
     llm_max_output_tokens: int | None = Field(131072, ge=1024)
 
     # Structured extraction may use its own model and endpoint; unset fields fall back to llm_*.
-    # Image transcription and the cross-check always use llm_*.
+    # Image transcription uses llm_*; the cross-check and AI review have their own optional ones.
     extraction_llm_provider: str | None = None
     extraction_llm_model: str | None = None
     extraction_llm_base_url: str | None = None
     extraction_llm_api_key: SecretStr | None = None
     extraction_reasoning_effort: str | None = Field(None, pattern="^(low|medium|high)$")
-    # Second model (on llm_* endpoint) run when the input looks multi-track or extraction fails.
+    # Second model run when the input looks multi-track or extraction fails. Its own endpoint
+    # fields are optional; unset ones fall back to llm_*.
     extraction_crosscheck_model: str | None = None
+    crosscheck_llm_provider: str | None = None
+    crosscheck_llm_base_url: str | None = None
+    crosscheck_llm_api_key: SecretStr | None = None
     # Review items that hinge on model judgement (quality, identity, revision candidates) are
     # first judged by this model on the llm_* endpoint; only what it still finds questionable
     # reaches people. Unset: items go straight to the review queue.
     review_llm_model: str | None = None
     review_reasoning_effort: str | None = Field("high", pattern="^(low|medium|high)$")
+    review_llm_provider: str | None = None
+    review_llm_base_url: str | None = None
+    review_llm_api_key: SecretStr | None = None
 
     # The public /v1 API requires an X-API-Key issued in the admin UI. Turn off only for local use.
     api_key_required: bool = True
@@ -115,6 +122,10 @@ RUNTIME_KEYS: dict[str, str] = {
     "extraction.model": "extraction_llm_model",
     "extraction.reasoning_effort": "extraction_reasoning_effort",
     "extraction.crosscheck_model": "extraction_crosscheck_model",
+    "crosscheck.provider": "crosscheck_llm_provider",
+    "crosscheck.base_url": "crosscheck_llm_base_url",
+    "review.provider": "review_llm_provider",
+    "review.base_url": "review_llm_base_url",
     "review.model": "review_llm_model",
     "review.reasoning_effort": "review_reasoning_effort",
     "embedding.provider": "embedding_provider",
@@ -154,7 +165,9 @@ async def resolved_settings(session: AsyncSession) -> Settings:
             ORDER BY secret_key, version_no DESC
         """))).mappings().all()
         secret_fields = {"llm.api_key": "llm_api_key", "embedding.api_key": "embedding_api_key",
-                         "extraction.api_key": "extraction_llm_api_key"}
+                         "extraction.api_key": "extraction_llm_api_key",
+                         "crosscheck.api_key": "crosscheck_llm_api_key",
+                         "review.api_key": "review_llm_api_key"}
         for row in rows:
             field = secret_fields.get(row["secret_key"])
             if field:
