@@ -126,11 +126,11 @@
         {% if method.url.state == 'stated' %}<div>{{ fact(method.url) }}</div>{% endif %}{% if method.email.state == 'stated' %}<div>{{ fact(method.email) }}</div>{% endif %}{% if method.address.state == 'stated' %}<div>{{ fact(method.address) }}</div>{% endif %}</div>
       {% else %}<p class="muted">없음</p>{% endfor %}
       <h3>연락처</h3>
-      {% for contact in (item.contacts if item else []) %}<div class="item-line small">{{ fact(contact.organization) }} {{ fact(contact.department) }} {{ fact(contact.phone) }} {{ fact(contact.email) }}</div>{% else %}<p class="muted">없음</p>{% endfor %}
+      {% for contact in (version.contacts or (item.contacts if item else [])) %}<div class="item-line small">{{ fact(contact.organization) }} {{ fact(contact.department) }} {{ fact(contact.phone) }} {{ fact(contact.email) }}</div>{% else %}<p class="muted">없음</p>{% endfor %}
     </section>
     <section class="panel">
       <h2>제출 서류</h2>
-      {% for doc in (item.required_documents if item else version.required_documents) %}<div class="item-line">{{ doc.name }} <span class="chip {{ 'brand' if doc.requiredness == 'required' else '' }}">{{ {'required': '필수', 'conditional': '해당자', 'optional': '선택', 'unknown': '미상'}.get(doc.requiredness, doc.requiredness) }}</span>{% if doc.condition %}<div class="small muted">{{ doc.condition }}</div>{% endif %}{{ refs(doc.evidence or []) }}</div>{% else %}<p class="muted">없음</p>{% endfor %}
+      {% for doc in (version.required_documents or (item.required_documents if item else [])) %}<div class="item-line">{{ doc.name }} <span class="chip {{ 'brand' if doc.requiredness == 'required' else '' }}">{{ {'required': '필수', 'conditional': '해당자', 'optional': '선택', 'unknown': '미상'}.get(doc.requiredness, doc.requiredness) }}</span>{% if doc.condition %}<div class="small muted">{{ doc.condition }}</div>{% endif %}{{ refs(doc.evidence or []) }}</div>{% else %}<p class="muted">없음</p>{% endfor %}
     </section>
   </div>
 

@@ -1,0 +1,23 @@
+# Taste
+- Prefers incremental scope: when several options are offered, do the smallest one now and defer the rest ("그냥 1번만 하자 지금은") instead of implementing everything at once. Confidence: 0.75
+- Wants commits made locally but not pushed until explicitly told; asks the agent to hold off on pushing, then to push when he decides. Confidence: 0.85
+- Expects explicit instructions (model names, providers, tools) to be followed exactly; verify availability or ask rather than silently substituting a different choice. Confidence: 0.8
+- Values autonomous judgment beyond the literal ask: expects the agent to add the metrics/details it considers useful ("기타 너가 필요하다고 생각하는거") rather than only doing the minimum. Confidence: 0.7
+- Wants evidence before committing to a design: small sample tests, empirical model comparisons, and independent grading/review passes instead of one-shot implementation. Confidence: 0.8
+- Wants model/tool comparisons presented as a table including cost, performance and other relevant metrics. Confidence: 0.7
+- Wants detailed written explanations of each change and expects the agent to track and list decisions left unanswered for him. Confidence: 0.7
+- Wants the process to be inspectable as it runs (repeatedly asks where a long-running job like embedding is, and what the current workflow/flow is). Confidence: 0.7
+- Prefers configuration through environment variables or docker compose over hardcoded values ("scale 카운트를 compose에 넣어줘 / 아니면 env에 넣어도 되고"). Confidence: 0.75
+- Prefers runtime-changeable settings (admin/DB overrides) with `.env` kept as the default fallback. Confidence: 0.7
+- Favors LLM-based parsing/vision over traditional OCR, and is willing to drop OCR entirely once LLM quality is comparable. Confidence: 0.8
+- Prefers simpler pipelines: send the whole page/image to the LLM with a clear statement of purpose and let it ignore what's irrelevant, rather than chains of preprocessing/transcription steps. Confidence: 0.75
+- Wants raw LLM request/response payloads persisted separately for auditing. Confidence: 0.75
+- Wants transient failures handled by waiting and retrying automatically rather than failing the job. Confidence: 0.8
+- Wants mechanical/derivable values (e.g., open/closed status, counts) computed by the system, not inferred by the LLM. Confidence: 0.75
+- Wants controlled vocabularies (e.g., semester) enforced as enums fixed at the DB level, not free-form strings. Confidence: 0.7
+- Expects data-integrity invariants (e.g., no duplicate email accounts) to be enforced by the system, not just by UI. Confidence: 0.7
+- Wants CI to build images automatically on every push and prefers ubuntu 24.04 runners. Confidence: 0.7
+- Treats secrets (API keys, passwords, `.env` contents) as strictly confidential: mask them when shown in the admin UI and never echo them in command output, docs, answers or commits. Confidence: 0.9
+- Wants the admin UI to allow per-model base URL / API key overrides while `.env` keeps the defaults. Confidence: 0.6
+- Holds the admin UI to a high bar: expects clear navigation and list views, tidy spacing/margins, sensible button sizing, and mobile-friendly layouts; complains when he cannot tell where things are. Confidence: 0.8
+- Prefers simple, self-explanatory controls over redundant ones (e.g., dropping activate/deactivate in favor of a single delete icon). Confidence: 0.6

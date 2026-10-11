@@ -91,6 +91,9 @@ WINDOW_FIELDS = {"start_date": "date", "end_date": "date", "start_time": "time",
                  "raw_text": "text", "conditions_text": "text"}
 BENEFIT_FIELDS = {"amount_kind": "amount_kind", "amount_min": "amount", "amount_max": "amount",
                   "raw_text": "text", "conditions_text": "text"}
+# JSON list columns: required documents (name/condition text) and contacts (fact-valued fields).
+DOCUMENT_FIELDS = {"name", "condition"}
+CONTACT_FIELDS = {"email", "phone", "person", "department", "organization"}
 AMOUNT_KINDS = {"fixed", "maximum", "range", "percentage", "formula", "variable", "unknown"}
 
 
@@ -293,7 +296,15 @@ async def _editable(session: AsyncSession, version_id: uuid.UUID) -> dict[str, A
         SELECT id, benefit_kind, amount_kind, amount_min, amount_max, payment_frequency, raw_text,
                conditions_text FROM inha_policy.benefits WHERE opportunity_version_id=:id
     """), {"id": version_id})).mappings().all()
+    lists = (await session.execute(text(
+        "SELECT required_documents, contacts FROM inha_policy.opportunity_versions WHERE id=:id"
+    ), {"id": version_id})).mappings().one()
+    documents = [{"index": index, "name": item.get("name"), "condition": item.get("condition"),
+                  "requiredness": item.get("requiredness")} for index, item in enumerate(lists["required_documents"] or [])]
+    contacts = [{"index": index, **{field: (item.get(field) or {}).get("value") for field in CONTACT_FIELDS}}
+                for index, item in enumerate(lists["contacts"] or [])]
     return {**{key: _plain(value) for key, value in row.items()},
+            "required_documents": documents, "contacts": contacts,
             "windows": [{key: _plain(value) for key, value in item.items()} for item in windows],
             "benefits": [{key: _plain(value) for key, value in item.items()} for item in benefits]}
 
@@ -392,6 +403,12 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
     done = []
     window_changes: dict[uuid.UUID, dict[str, Any]] = {}
     benefit_changes: dict[uuid.UUID, dict[str, Any]] = {}
+    lists = dict((await session.execute(text(
+        "SELECT required_documents, contacts FROM inha_policy.opportunity_versions WHERE id=:id"
+    ), {"id": version_id})).mappings().one())
+    lists = {key: [dict(item) for item in (value or [])] for key, value in lists.items()}
+    removed: dict[str, set[int]] = {"required_documents": set(), "contacts": set()}
+    touched_lists: set[str] = set()
     for item in corrections:
         parts = item.path.strip("/").split("/")
         if len(parts) == 1:
@@ -403,6 +420,40 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
             await session.execute(text(
                 f"UPDATE inha_policy.opportunity_versions SET {column}=:value WHERE id=:id"
             ), {"id": version_id, "value": value})
+        elif parts[0] in {"required_documents", "contacts"}:
+            column, items = parts[0], lists[parts[0]]
+            evidence = [{"quote": item.quote, "evidence_type": "explicit", "source": "ai_review"}]
+            if len(parts) == 2 and parts[1] == "-" and column == "required_documents":
+                if not isinstance(item.value, str) or not item.value.strip():
+                    raise ActionRefused(f"{item.path}: a new document needs its name")
+                items.append({"name": item.value.strip(), "condition": None, "requiredness": "required",
+                              "evidence": evidence})
+                before, value = None, item.value.strip()
+            else:
+                try:
+                    index = int(parts[1])
+                    target = items[index]
+                except (ValueError, IndexError) as exc:
+                    raise ActionRefused(f"{item.path}: no such entry") from exc
+                if len(parts) == 2:
+                    if item.value is not None:
+                        raise ActionRefused(f"{item.path}: a whole entry can only be removed (value null)")
+                    before, value = target.get("name") if column == "required_documents" else target, None
+                    removed[column].add(index)
+                elif column == "required_documents" and len(parts) == 3 and parts[2] in DOCUMENT_FIELDS:
+                    value = _coerce("text", item.value, item.path)
+                    before = target.get(parts[2])
+                    target[parts[2]] = value
+                    if parts[2] == "name":
+                        target["evidence"] = evidence
+                elif column == "contacts" and len(parts) == 3 and parts[2] in CONTACT_FIELDS:
+                    value = _coerce("text", item.value, item.path)
+                    before = (target.get(parts[2]) or {}).get("value")
+                    target[parts[2]] = ({"state": "stated", "value": value, "evidence": evidence} if value
+                                        else {"state": "not_found", "value": None, "evidence": []})
+                else:
+                    raise ActionRefused(f"{item.path} is not correctable")
+            touched_lists.add(column)
         elif len(parts) == 2 and parts[0] in {"windows", "benefits"}:
             if item.value is not None:
                 raise ActionRefused(f"{item.path}: a whole row can only be removed (value null)")
@@ -441,6 +492,11 @@ async def _correct(session: AsyncSession, version_id: uuid.UUID,
         else:
             raise ActionRefused(f"{item.path} is not correctable")
         done.append({"path": item.path, "before": _plain(before), "after": _plain(value), "quote": item.quote})
+    for column in touched_lists:  # each list is written once, removals applied last
+        kept = [entry for index, entry in enumerate(lists[column]) if index not in removed[column]]
+        await session.execute(text(
+            f"UPDATE inha_policy.opportunity_versions SET {column}=CAST(:value AS jsonb) WHERE id=:id"
+        ), {"id": version_id, "value": json.dumps(kept, ensure_ascii=False)})
     for row_id, changes in window_changes.items():
         current = dict((await session.execute(text("""
             SELECT start_date, start_time, end_date, end_time FROM inha_policy.application_windows

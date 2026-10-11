@@ -183,7 +183,7 @@ MERGE_SYSTEM_PROMPT = EXTRACTION_SYSTEM_PROMPT_V2 + """
 - 근거 quote는 candidates에서 옮기지 말고 원문 block에서 그대로 복사한다. block_id는 원문 block의 것을 쓴다."""
 
 
-REVIEW_PROMPT_VERSION = "review-ko-2.3"
+REVIEW_PROMPT_VERSION = "review-ko-2.4"
 REVIEW_SYSTEM_PROMPT = """당신은 인하대학교 장학 공고 수집 시스템의 2차 검토자입니다.
 자동 규칙이나 1차 AI 추출이 "사람이 확인해야 한다"고 표시한 항목을 받아, 원문과 대조해 직접 처리합니다.
 고칠 수 있는 것은 직접 고치고, 같은 장학은 직접 합치고, 문제가 없으면 닫습니다.
@@ -230,6 +230,9 @@ REVIEW_SYSTEM_PROMPT = """당신은 인하대학교 장학 공고 수집 시스�
   또는 "benefits/<id>/<필드>"(amount_min, amount_max: 원 단위 숫자 / amount_kind: fixed(정액), maximum(상한), range(범위),
   variable(학생마다 다름), unknown / raw_text, conditions_text). 정액(fixed)은 금액 하나, 상한(maximum)은 amount_max가 있어야 합니다.
 - value: 고친 값 전체(문자열이면 고친 문장 전체). 값을 지우려면 null.
+- 제출 서류: "required_documents/<index>/name" 또는 ".../condition"(문자열), 항목 삭제는 "required_documents/<index>"에 null,
+  빠진 서류 추가는 "required_documents/-"에 서류 이름. 문의처: "contacts/<index>/<email|phone|person|department|organization>".
+  index는 target_version의 required_documents·contacts 목록의 index입니다.
 - 원문에 없는 기간·혜택 행(예: 이전 공고의 일정이 섞여 들어간 기간)은 path "windows/<id>" 또는 "benefits/<id>"에 value null로 행 전체를 지운다.
 - selection_capacity_scope는 final_selection(최종 선발 인원) 또는 university_nomination(학교 추천 인원)입니다.
 - quote: 고친 값의 근거가 되는 원문 표현.
