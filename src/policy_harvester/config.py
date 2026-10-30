@@ -65,6 +65,10 @@ class Settings(BaseSettings):
     review_llm_base_url: str | None = None
     review_llm_api_key: SecretStr | None = None
 
+    # Backend import callback: exact trusted backend base URL and shared HMAC key.
+    import_callback_base_url: str | None = None
+    import_callback_secret: SecretStr | None = None
+
     # The public /v1 API requires an X-API-Key issued in the admin UI. Turn off only for local use.
     api_key_required: bool = True
 

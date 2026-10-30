@@ -93,6 +93,10 @@ services:
     deploy:
       replicas: ${WORKER_EMBED_REPLICAS:-1}
 
+  import-worker:
+    <<: *worker
+    command: python -m policy_harvester.import_jobs
+
   # All stages in one process; also the service for one-off commands (docker compose run worker ...).
   worker:
     <<: *worker

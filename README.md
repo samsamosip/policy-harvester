@@ -127,6 +127,12 @@ job retry), 정정·연장 적용, 동일성 후보, 품질 상한, 실패 원�
 의존하지 않도록 구조와 불변식을 검사한다. 같은 게시글 재추출 매칭처럼 모델이 관여하지 않는
 결정론적 로직은 고정 추출 결과를 assembler에 직접 넣어 검사한다.
 
+## 백엔드 공고 불러오기
+
+`POST /v1/import-jobs`와 `GET /v1/import-jobs/{requestId}`로 URL·캡처에서 직접 등록 초안을 불러온다.
+`docker compose up -d api import-worker`로 실행하며, 설정과 콜백 계약은
+[backend 연동 문서](docs/backend-import-jobs.md)를 참고한다.
+
 ## 코드 구조
 
 | 경로 | 역할 |
