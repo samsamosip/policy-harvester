@@ -29,9 +29,10 @@ ENV DOCLING_ARTIFACTS_PATH=/opt/docling-models HF_HUB_OFFLINE=1
 RUN HF_HUB_OFFLINE=0 docling-tools models download -o /opt/docling-models layout tableformer
 
 # rhwp renders HWP/HWPX to PDF (pinned, checksummed); it embeds the Korean fonts installed above.
+# SHA-256 from the v0.8.7 release's SHA256SUMS.txt and GitHub asset digest.
 ENV RHWP_VERSION=0.8.7
 RUN curl -fsSL https://github.com/edwardkim/rhwp/releases/download/v0.8.7/rhwp-v0.8.7-linux-x86_64.tar.gz -o /tmp/rhwp.tgz && \
-    echo "24de2bdaa0b69f86302a27e7fdfb570ad3c53b0ab3a4eac06446adc651dfb988  /tmp/rhwp.tgz" | sha256sum -c - && \
+    echo "f1e541a25cfe76b6bc1daf18bf9c1f9a5ac5e03e2c01b188daaf54107214f631  /tmp/rhwp.tgz" | sha256sum -c - && \
     tar -xzf /tmp/rhwp.tgz -C /tmp && install -m 0755 /tmp/rhwp/rhwp /usr/local/bin/rhwp && \
     rm -rf /tmp/rhwp /tmp/rhwp.tgz
 
