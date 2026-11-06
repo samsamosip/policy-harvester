@@ -244,6 +244,9 @@ async def list_opportunities(
     search_mode: Literal["hybrid", "lexical", "vector"] = Query(
         default="hybrid", description="q의 순위: hybrid(어휘 0.45 + 의미 0.55), lexical(어휘만), vector(의미만)"),
     income_bracket_max: int | None = Query(default=None, ge=0, le=20),
+    include_stale: bool = Query(
+        default=False, description="원문이 바뀌어 다시 정리 중인(source_is_stale) 공고도 포함. "
+                                   "목록 전체로 동기화하는 소비자가 이런 공고를 삭제로 오인하지 않게 한다"),
     cursor: str | None = None,
     limit: int = Query(default=20, ge=1, le=100),
 ) -> dict[str, Any]:
@@ -261,7 +264,7 @@ async def list_opportunities(
     korea_now = datetime.now(ZoneInfo("Asia/Seoul"))
     parameters: dict[str, Any] = {"limit": limit + 1, "offset": offset,
                                   "today": korea_now.date(), "now_time": korea_now.time()}
-    predicates = ["NOT ov.source_is_stale"]
+    predicates = ["true" if include_stale else "NOT ov.source_is_stale"]
     if category:
         predicates.append(":category = ANY(ov.categories)")
         parameters["category"] = category
