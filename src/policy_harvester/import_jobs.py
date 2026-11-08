@@ -34,7 +34,11 @@ from .documents.parsers import HtmlParser
 from .documents.vision import VISION_PROMPT, prepare_image
 
 MAX_IMAGE = 10 * 1024 * 1024
-MAX_REQUEST = MAX_IMAGE + 65536
+MAX_IMAGES = 5
+MAX_IMAGES_BYTES = 30 * 1024 * 1024
+MAX_REQUEST = MAX_IMAGES_BYTES + 65536
+PROCESS_TIMEOUT = 300
+STALE_AFTER = PROCESS_TIMEOUT + 30
 MAX_PAGE = 5 * 1024 * 1024
 RETRY_DELAYS = (10, 60, 300)
 ERROR_MESSAGES = {
@@ -105,6 +109,8 @@ PROMPT = '''공개 지원사업·장학·청년 정책 공고를 직접 등록�
 상시 신청은 날짜 null. 시각은 명시된 경우만 HH:mm; 날짜가 없으면 시각도 null.
 분류는 일자리/주거/교육/복지문화/참여권리 중 하나, 장학금은 교육, 애매하면 null.
 메모는 지원 내용·신청 방법을 1000자 이하로 요약하며 개인정보는 포함하지 않는다.
+여러 캡처는 같은 공고의 연속 자료다. 캡처 순서대로 내용을 종합하고 겹치는 내용은 중복하지 않는다.
+앞 캡처에 제목이 있고 뒤 캡처에 신청 기간이 있을 수 있으므로 모든 캡처를 함께 확인한다.
 '''
 
 
@@ -167,14 +173,14 @@ async def bounded_body(request: Request) -> bytes:
     async for chunk in request.stream():
         data.extend(chunk)
         if len(data) > MAX_REQUEST:
-            raise HTTPException(413, '이미지는 10MB 이하여야 합니다')
+            raise HTTPException(413, '캡처는 장당 10MB, 합계 30MB 이하여야 합니다')
     return bytes(data)
 
 
-async def parse_request(request: Request) -> tuple[ImportRequest, bytes | None, str | None]:
+async def parse_request(request: Request) -> tuple[ImportRequest, list[tuple[bytes, str]]]:
     body = await bounded_body(request)
     content_type = request.headers.get('content-type', '').split(';')[0].strip().lower()
-    image_bytes, mime = None, None
+    images = []
     try:
         if content_type == 'application/json':
             data = ImportRequest.model_validate_json(body)
@@ -183,30 +189,36 @@ async def parse_request(request: Request) -> tuple[ImportRequest, bytes | None, 
             web_url(data.url)
         elif content_type == 'multipart/form-data':
             request._body = body
-            async with request.form(max_files=1, max_fields=4) as form:
-                fields = dict(form)
-                image = fields.pop('image', None)
+            async with request.form(max_files=MAX_IMAGES, max_fields=4) as form:
+                files = form.getlist('image')
+                fields = {key: value for key, value in form.items() if key != 'image'}
                 data = ImportRequest.model_validate(fields)
-                if data.type != 'image' or data.url or not isinstance(image, UploadFile):
-                    raise ValueError('image required')
-                image_bytes = await image.read(MAX_IMAGE + 1)
-                if len(image_bytes) > MAX_IMAGE:
-                    raise HTTPException(413, '이미지는 10MB 이하여야 합니다')
-                with Image.open(io.BytesIO(image_bytes)) as decoded:
-                    mime = Image.MIME.get(decoded.format)
-                    if mime not in ('image/png', 'image/jpeg', 'image/webp'):
-                        raise ValueError('unsupported image')
-                    if decoded.width * decoded.height > 40_000_000:
-                        raise ValueError('image dimensions too large')
-                    decoded.verify()
-                if image.content_type != mime:
-                    raise ValueError('image content type mismatch')
+                if data.type != 'image' or data.url or not 1 <= len(files) <= MAX_IMAGES:
+                    raise ValueError('1 to 5 images required')
+                total = 0
+                for image in files:
+                    if not isinstance(image, UploadFile):
+                        raise ValueError('image required')
+                    image_bytes = await image.read(MAX_IMAGE + 1)
+                    total += len(image_bytes)
+                    if len(image_bytes) > MAX_IMAGE or total > MAX_IMAGES_BYTES:
+                        raise HTTPException(413, '캡처는 장당 10MB, 합계 30MB 이하여야 합니다')
+                    with Image.open(io.BytesIO(image_bytes)) as decoded:
+                        mime = Image.MIME.get(decoded.format)
+                        if mime not in ('image/png', 'image/jpeg', 'image/webp'):
+                            raise ValueError('unsupported image')
+                        if decoded.width * decoded.height > 40_000_000:
+                            raise ValueError('image dimensions too large')
+                        decoded.verify()
+                    if image.content_type != mime:
+                        raise ValueError('image content type mismatch')
+                    images.append((image_bytes, mime))
         else:
             raise ValueError('unsupported content type')
         data.callbackUrl = callback_url(data.callbackUrl, data.requestId)
     except (ValidationError, ValueError, UnidentifiedImageError, OSError, Image.DecompressionBombError):
         raise HTTPException(400, '요청 형식 또는 이미지 파일이 올바르지 않습니다') from None
-    return data, image_bytes, mime
+    return data, images
 
 
 @router.post('/v1/import-jobs', status_code=202, responses={400: {}, 401: {}, 413: {}},
@@ -216,22 +228,29 @@ async def parse_request(request: Request) -> tuple[ImportRequest, bytes | None, 
                      'properties': {'requestId': {'type': 'string', 'format': 'uuid'},
                                     'type': {'type': 'string', 'enum': ['image']},
                                     'callbackUrl': {'type': 'string'},
-                                    'image': {'type': 'string', 'format': 'binary'}}}}}}})
+                                    'image': {'type': 'array', 'minItems': 1, 'maxItems': MAX_IMAGES,
+                                              'items': {'type': 'string', 'format': 'binary'}}}}}}}})
 async def create_job(request: Request, session: Session, key_id: Owner):
-    data, image, mime = await parse_request(request)
+    data, images = await parse_request(request)
+    image, mime = images[0] if images else (None, None)
     if data.callbackUrl:
         try:
             await asyncio.wait_for(public_destination(data.callbackUrl), 5)
         except (ValueError, OSError, TimeoutError):
             raise HTTPException(400, '콜백 주소에 접근할 수 없습니다') from None
     await session.execute(text('DELETE FROM inha_policy.import_jobs WHERE expires_at <= now()'))
-    await session.execute(text('''
+    inserted = (await session.execute(text('''
         INSERT INTO inha_policy.import_jobs
           (request_id, api_key_id, input_type, source_url, image_bytes, image_mime, callback_url)
         VALUES (:id, :owner, :type, :url, :image, :mime, :callback)
-        ON CONFLICT (request_id) DO NOTHING
+        ON CONFLICT (request_id) DO NOTHING RETURNING request_id
     '''), dict(id=data.requestId, owner=key_id, type=data.type, url=data.url,
-               image=image, mime=mime, callback=data.callbackUrl))
+               image=image, mime=mime, callback=data.callbackUrl))).scalar_one_or_none()
+    if inserted and len(images) > 1:
+        await session.execute(text('''INSERT INTO inha_policy.import_job_images
+            (request_id, position, image_bytes, image_mime) VALUES (:id, :position, :image, :mime)'''),
+            [dict(id=data.requestId, position=position, image=content, mime=mime)
+             for position, (content, mime) in enumerate(images[1:], start=2)])
     row = (await session.execute(text('''SELECT api_key_id, status FROM inha_policy.import_jobs
         WHERE request_id=:id'''), {'id': data.requestId})).mappings().one()
     if row['api_key_id'] != key_id:
@@ -287,14 +306,30 @@ async def extract(job: dict) -> dict:
         except (httpx.HTTPError, ValueError, OSError, HTTPException):
             return failed(job['request_id'], 'FETCH_FAILED')
     else:
-        image = prepare_image(bytes(job['image_bytes']))
-        if image is None:
+        # The first capture remains in the original column for existing single-image jobs.
+        captures = [job['image_bytes'], *job.get('extra_images', [])]
+        slots = asyncio.Semaphore(2)
+
+        async def transcribe(capture):
+            async with slots:
+                image = prepare_image(bytes(capture))
+                if image is None:
+                    return None
+                transcription = await registry.llm().transcribe_image(
+                    model=settings.llm_model, image=image, mime='image/jpeg', prompt=VISION_PROMPT, parameters={})
+                value = transcription.text.strip()
+                return value if value.replace('[판독불가]', '').strip() else None
+
+        # Settle every page before ending the job, including provider failures.
+        pages = await asyncio.gather(*(transcribe(capture) for capture in captures), return_exceptions=True)
+        for page in pages:
+            if isinstance(page, BaseException):
+                raise page
+        # Never silently discard an unreadable page: it may contain the deadline.
+        if any(page is None for page in pages):
             return failed(job['request_id'], 'UNREADABLE_IMAGE')
-        transcription = await registry.llm().transcribe_image(
-            model=settings.llm_model, image=image, mime='image/jpeg', prompt=VISION_PROMPT, parameters={})
-        content = transcription.text.strip()
-        if not content or content.replace('[판독불가]', '').strip() == '':
-            return failed(job['request_id'], 'UNREADABLE_IMAGE')
+        content = pages[0] if len(pages) == 1 else '\n\n'.join(
+            f'[캡처 {i}/{len(pages)}]\n{page}' for i, page in enumerate(pages, start=1))
     if not content.strip():
         return failed(job['request_id'], 'NOT_A_NOTICE')
     target = registry.extraction()
@@ -329,20 +364,25 @@ async def process_one() -> bool:
         await session.execute(text('DELETE FROM inha_policy.import_jobs WHERE expires_at <= now()'))
         # A worker that died after claiming a job must not leave polling stuck forever.
         stale = (await session.execute(text('''SELECT request_id FROM inha_policy.import_jobs
-            WHERE status='running' AND started_at < now()-interval '60 seconds'
-            FOR UPDATE SKIP LOCKED'''))).mappings().all()
+            WHERE status='running' AND started_at < now()-make_interval(secs => :stale_after)
+            FOR UPDATE SKIP LOCKED'''), {'stale_after': STALE_AFTER})).mappings().all()
         for row in stale:
             await finish(session, row, failed(row['request_id'], 'TIMEOUT'))
         job = (await session.execute(text('''UPDATE inha_policy.import_jobs SET status='running', started_at=now()
             WHERE request_id=(SELECT request_id FROM inha_policy.import_jobs
                 WHERE status='queued' AND expires_at > now() ORDER BY created_at
                 FOR UPDATE SKIP LOCKED LIMIT 1) RETURNING *'''))).mappings().one_or_none()
+        if job is not None:
+            job = dict(job)
+            job['extra_images'] = (await session.execute(text(
+                'SELECT image_bytes FROM inha_policy.import_job_images WHERE request_id=:id ORDER BY position'),
+                {'id': job['request_id']})).scalars().all()
         await session.commit()
     if job is None:
         return False
     try:
-        async with asyncio.timeout(60):
-            response = await extract(dict(job))
+        async with asyncio.timeout(PROCESS_TIMEOUT):
+            response = await extract(job)
     except (TimeoutError, httpx.TimeoutException):
         response = failed(job['request_id'], 'TIMEOUT')
     except Exception:

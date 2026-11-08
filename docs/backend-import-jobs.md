@@ -53,8 +53,13 @@ X-API-Key: <backend key>
 미완료 작업을 먼저 처리해야 한다.
 
 이미지는 multipart/form-data의 `requestId`, `type=image`, 선택 `callbackUrl`, `image` 파일로
-보낸다. 실제 파일 내용과 MIME을 검증하며 PNG/JPEG/WEBP, 최대 10MiB, 최대 4천만 픽셀을
-허용한다. 잘못된 입력은 400, 키 오류는 401, 용량 초과는 413이다.
+보낸다. `image` 필드를 반복해 같은 공고의 캡처를 최대 5장까지 순서대로 보낼 수 있다.
+실제 파일 내용과 MIME을 모두 검증하며 PNG/JPEG/WEBP, 장당 최대 10MiB·4천만 픽셀,
+합계 최대 30MiB를 허용한다. 요청 본문 한도는 multipart 헤더를 포함해 30MiB + 64KiB다.
+한 장 요청도 기존 형식 그대로 동작한다. 모든 이미지가 유효해야 작업을 만들며,
+같은 requestId로 다시 보내도 최초 이미지와 순서를 유지한다.
+이미지 전사는 최대 2개씩 병렬로 실행하고, 순서 표시를 붙여 한 번의 구조화 요청으로 합친다.
+어느 한 장이라도 읽을 수 없으면 `UNREADABLE_IMAGE`로 실패하며 그 장을 조용히 버리지 않는다. 잘못된 입력은 400, 키 오류는 401, 용량 초과는 413이다.
 
 `GET /v1/import-jobs/{requestId}`는 queued/running 상태 또는 최종 결과를 반환한다.
 최종 결과는 설계서대로 `requestId`, `status=succeeded`, `result` 또는
@@ -70,11 +75,11 @@ X-API-Key: <backend key>
 | sourceUrl | URL 요청의 원래 주소, 이미지 요청은 null |
 
 backend `ImportPrefill`은 title/organization을 각각 100자로 자르고 sourceUrl을 화면의
-applyUrl로 변환한다. 이 동작은 backend가 담당한다. 첨부 backend의 사용자 API는 현재
-URL만 보내지만 Harvester는 설계서의 이미지 요청까지 지원한다.
+applyUrl로 변환한다. 이 동작은 backend가 담당한다. 사용자 API `POST /api/v1/me/imports/image`도
+같은 `image` 반복 필드를 받고, 한 묶음을 불러오기 1회로 센다.
 
 실패 코드는 `FETCH_FAILED`, `NOT_A_NOTICE`, `UNREADABLE_IMAGE`, `TIMEOUT`, `INTERNAL`이다.
-처리는 시작 후 60초로 제한한다. worker 중단으로 남은 running 작업도 TIMEOUT으로 정리한다.
+처리는 시작 후 300초로 제한한다. worker 중단으로 330초 넘게 남은 running 작업도 TIMEOUT으로 정리한다.
 최종 결과와 업로드는 완료 후 24시간 보관하고 worker가 삭제한다. 만료 즉시 조회는 404다.
 대기 작업도 생성 후 24시간에 만료한다. 이 삭제는 기존 원본·공고·version 테이블과 무관하다.
 
@@ -83,8 +88,16 @@ URL만 보내지만 Harvester는 설계서의 이미지 요청까지 지원한�
 `X-Timestamp`는 현재 유닉스 초다. non-2xx, 연결 실패, 5초 내 응답 없음은 실패로 처리하고
 실패 시점부터 10초 → 60초 → 300초 후 최대 3회 재전송한다(최초 포함 4회).
 시도와 다음 실행 시간을 DB에 기록하므로 재시작에도 유지된다. 콜백 실패와 무관하게
-polling 결과는 유지한다. 첨부 backend는 3분 후 미완료 작업을 실패로 확정하므로,
-5분 뒤 최종 콜백보다 조회 fallback이 먼저 결과를 회수하도록 정상 설정해야 한다.
+polling 결과는 유지한다. backend는 생성 후 10분 넘게 미완료인 작업을 실패로 확정한다.
+콜백이 도착하지 않으면 생성 후 30초부터 조회 fallback으로 결과를 회수한다.
+
+## 배포 순서
+
+Harvester migration `0011_import_job_images`를 먼저 적용하고 API와 import-worker를 함께 갱신한 뒤,
+backend, frontend 순서로 배포한다. 첫 캡처는 기존 열에 유지하며, 나머지는 순번과 함께
+`import_job_images`에 저장한다. 작업 만료 시 외래키 cascade로 함께 삭제된다.
+이전 worker가 다중 캡처 작업을 한 장으로 처리하지 않도록 API만 먼저 갱신하지 않는다.
+앞단 프록시가 있다면 multipart 요청 크기 한도도 최소 31MiB로 맞춘다.
 
 ## 검증
 

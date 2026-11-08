@@ -94,6 +94,63 @@ class ImportJobsIntegration(unittest.IsolatedAsyncioTestCase):
                                          files={'image': ('x.png', image.getvalue(), 'image/png')})
         self.assertEqual(response.status_code, 202, response.text)
 
+    async def test_multiple_captures_survive_retry_worker_and_expiry_in_order(self):
+        request_id = uuid.uuid4()
+        captures = []
+        for color in ('white', 'black', 'blue'):
+            image = io.BytesIO()
+            Image.new('RGB', (300, 200), color).save(image, format='PNG')
+            captures.append(image.getvalue())
+        data = {'requestId': str(request_id), 'type': 'image'}
+        files = [('image', (f'{i}.png', content, 'image/png')) for i, content in enumerate(captures)]
+        results = await asyncio.gather(*(self.client.post('/v1/import-jobs', data=data, files=files) for _ in range(2)))
+        self.assertTrue(all(r.status_code == 202 for r in results), [r.text for r in results])
+        async with SessionFactory() as session:
+            stored = (await session.execute(text('SELECT image_bytes FROM inha_policy.import_job_images '
+                'WHERE request_id=:id ORDER BY position'), {'id': request_id})).scalars().all()
+            self.assertEqual([bytes(value) for value in stored], captures[1:])
+        with patch.object(jobs, 'extract', AsyncMock(return_value=jobs.failed(request_id, 'NOT_A_NOTICE'))) as extract:
+            self.assertTrue(await jobs.process_one())
+            job = extract.call_args.args[0]
+            self.assertEqual(bytes(job['image_bytes']), captures[0])
+            self.assertEqual([bytes(value) for value in job['extra_images']], captures[1:])
+        async with SessionFactory() as session:
+            await session.execute(text("UPDATE inha_policy.import_jobs SET expires_at=now()-interval '1 second' WHERE request_id=:id"), {'id': request_id})
+            await session.commit()
+        await jobs.process_one()
+        async with SessionFactory() as session:
+            self.assertEqual(await session.scalar(text('SELECT count(*) FROM inha_policy.import_job_images WHERE request_id=:id'), {'id': request_id}), 0)
+
+    async def test_bad_later_capture_and_too_many_captures_create_no_job(self):
+        request_id = uuid.uuid4()
+        image = io.BytesIO()
+        Image.new('RGB', (300, 200), 'white').save(image, format='PNG')
+        valid = ('image', ('valid.png', image.getvalue(), 'image/png'))
+        data = {'requestId': str(request_id), 'type': 'image'}
+        for files in ([valid, ('image', ('bad.png', b'not an image', 'image/png'))], [valid] * 6, []):
+            response = await self.client.post('/v1/import-jobs', data=data, files=files)
+            self.assertEqual(response.status_code, 400, response.text)
+        async with SessionFactory() as session:
+            self.assertEqual(await session.scalar(text('SELECT count(*) FROM inha_policy.import_jobs WHERE request_id=:id'), {'id': request_id}), 0)
+
+    async def test_five_captures_allowed_but_total_bytes_limited(self):
+        image = io.BytesIO()
+        Image.new('RGB', (300, 200), 'white').save(image, format='PNG')
+        valid = ('image', ('valid.png', image.getvalue(), 'image/png'))
+        request_id = uuid.uuid4()
+        accepted = await self.client.post('/v1/import-jobs',
+            data={'requestId': str(request_id), 'type': 'image'}, files=[valid] * 5)
+        self.assertEqual(accepted.status_code, 202, accepted.text)
+        # Each PNG is below 10MiB, but together they exceed 30MiB.
+        padded = ('image', ('large.png', image.getvalue().ljust(8 * 1024 * 1024, b'\0'), 'image/png'))
+        rejected_id = uuid.uuid4()
+        rejected = await self.client.post('/v1/import-jobs',
+            data={'requestId': str(rejected_id), 'type': 'image'}, files=[padded] * 4)
+        self.assertEqual(rejected.status_code, 413, rejected.text)
+        async with SessionFactory() as session:
+            self.assertEqual(await session.scalar(text('SELECT count(*) FROM inha_policy.import_job_images WHERE request_id=:id'), {'id': request_id}), 4)
+            self.assertEqual(await session.scalar(text('SELECT count(*) FROM inha_policy.import_jobs WHERE request_id=:id'), {'id': rejected_id}), 0)
+
     async def test_worker_terminal_result_and_expiry(self):
         request_id = uuid.uuid4()
         await self.submit(request_id)
@@ -119,7 +176,7 @@ class ImportJobsIntegration(unittest.IsolatedAsyncioTestCase):
         request_id = uuid.uuid4()
         await self.submit(request_id)
         async with SessionFactory() as session:
-            await session.execute(text("UPDATE inha_policy.import_jobs SET status='running', started_at=now()-interval '61 seconds' WHERE request_id=:id"), {'id': request_id})
+            await session.execute(text("UPDATE inha_policy.import_jobs SET status='running', started_at=now()-interval '331 seconds' WHERE request_id=:id"), {'id': request_id})
             await session.commit()
         await jobs.process_one()
         response = (await self.client.get(f'/v1/import-jobs/{request_id}')).json()

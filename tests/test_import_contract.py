@@ -104,6 +104,52 @@ class ImportExtractionTests(unittest.IsolatedAsyncioTestCase):
         self.assertEqual(provider.structured.call_args.kwargs['payload']['document'], '문화패스 공고')
         provider.transcribe_image.assert_awaited_once()
 
+    async def test_all_captures_are_combined_in_order_before_one_extraction(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from policy_harvester import import_jobs as jobs
+        extraction = jobs.Extraction(isNotice=True, result=Prefill(title='장학 안내', organization=None,
+            applyEndDate='2026-11-20', applyEndTime='18:00', category='교육', memo='등록금 지원'))
+        async def transcribe(**kwargs):
+            # Later pages can finish first without changing document order.
+            import asyncio
+            if kwargs['image'] == b'first':
+                await asyncio.sleep(0.01)
+                return SimpleNamespace(text='제목: 장학 안내')
+            return SimpleNamespace(text='신청 마감: 2026-11-20 18:00')
+        provider = SimpleNamespace(structured=AsyncMock(return_value=SimpleNamespace(value=extraction)),
+                                   transcribe_image=AsyncMock(side_effect=transcribe))
+        registry = MagicMock()
+        registry.llm.return_value = provider
+        registry.extraction.return_value = SimpleNamespace(provider=provider, model='test', parameters={})
+        with patch.object(jobs, 'resolved_settings', AsyncMock(return_value=Settings())), \
+             patch.object(jobs, 'ProviderRegistry', return_value=registry), \
+             patch.object(jobs, 'prepare_image', side_effect=lambda value: value):
+            result = await jobs.extract({'request_id': uuid.uuid4(), 'input_type': 'image',
+                'source_url': None, 'image_bytes': b'first', 'extra_images': [b'second']})
+        self.assertEqual(result['status'], 'succeeded')
+        provider.structured.assert_awaited_once()
+        self.assertEqual(provider.transcribe_image.await_count, 2)
+        document = provider.structured.call_args.kwargs['payload']['document']
+        self.assertLess(document.index('제목: 장학 안내'), document.index('신청 마감:'))
+        self.assertIn('[캡처 2/2]', document)
+
+    async def test_unreadable_later_capture_fails_instead_of_silently_dropping_it(self):
+        from types import SimpleNamespace
+        from unittest.mock import AsyncMock, MagicMock
+        from policy_harvester import import_jobs as jobs
+        provider = SimpleNamespace(structured=AsyncMock(), transcribe_image=AsyncMock(
+            side_effect=[SimpleNamespace(text='장학 안내'), SimpleNamespace(text='[판독불가]')]))
+        registry = MagicMock()
+        registry.llm.return_value = provider
+        with patch.object(jobs, 'resolved_settings', AsyncMock(return_value=Settings())), \
+             patch.object(jobs, 'ProviderRegistry', return_value=registry), \
+             patch.object(jobs, 'prepare_image', side_effect=lambda value: value):
+            result = await jobs.extract({'request_id': uuid.uuid4(), 'input_type': 'image',
+                'source_url': None, 'image_bytes': b'first', 'extra_images': [b'second']})
+        self.assertEqual(result['error']['code'], 'UNREADABLE_IMAGE')
+        provider.structured.assert_not_awaited()
+
     async def test_redirect_cannot_fetch_private_destination(self):
         import httpx
         from unittest.mock import AsyncMock
